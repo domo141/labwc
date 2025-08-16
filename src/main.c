@@ -53,15 +53,28 @@ usage(void)
 static void
 print_version(void)
 {
-	#define FEATURE_ENABLED(feature) (HAVE_##feature ? "+" : "-")
-	printf("labwc %s (%sxwayland %snls %srsvg %slibsfdo)\n",
-		LABWC_VERSION,
-		FEATURE_ENABLED(XWAYLAND),
-		FEATURE_ENABLED(NLS),
-		FEATURE_ENABLED(RSVG),
-		FEATURE_ENABLED(LIBSFDO)
-	);
-	#undef FEATURE_ENABLED
+	printf("labwc " LABWC_VERSION " ("
+#if HAVE_XWAYLAND
+			"+xwayland "
+#else
+			"-xwayland "
+#endif
+#if HAVE_NLS
+			"+nls "
+#else
+			"-nls "
+#endif
+#if HAVE_RSVG
+			"+rsvg "
+#else
+			"-rsvg "
+#endif
+#if HAVE_LIBSFDO
+			"+libsfdo"
+#else
+			"-libsfdo"
+#endif
+		")\n");
 }
 
 static void
