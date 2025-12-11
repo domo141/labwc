@@ -12,7 +12,7 @@
 #include <strings.h>
 #include <wlr/backend/drm.h>
 #include <wlr/backend/wayland.h>
-#include <wlr/types/wlr_buffer.h>
+#include <wlr/types/wlr_cursor.h>
 #include <wlr/types/wlr_drm_lease_v1.h>
 #include <wlr/types/wlr_gamma_control_v1.h>
 #include <wlr/types/wlr_output.h>
@@ -21,12 +21,11 @@
 #include <wlr/types/wlr_xcursor_manager.h>
 #include <wlr/types/wlr_xdg_output_v1.h>
 #include <wlr/types/wlr_scene.h>
-#include <wlr/util/region.h>
 #include <wlr/util/log.h>
-#include "common/direction.h"
 #include "common/macros.h"
 #include "common/mem.h"
 #include "common/scene-helpers.h"
+#include "config/rcxml.h"
 #include "labwc.h"
 #include "layers.h"
 #include "node.h"
@@ -171,7 +170,7 @@ handle_output_destroy(struct wl_listener *listener, void *data)
 	regions_evacuate_output(output);
 	regions_destroy(seat, &output->regions);
 	if (seat->overlay.active.output == output) {
-		overlay_hide(seat);
+		overlay_finish(seat);
 	}
 	wl_list_remove(&output->link);
 	wl_list_remove(&output->frame.link);
@@ -183,7 +182,7 @@ handle_output_destroy(struct wl_listener *listener, void *data)
 		wlr_scene_node_destroy(&output->layer_tree[i]->node);
 	}
 	wlr_scene_node_destroy(&output->layer_popup_tree->node);
-	wlr_scene_node_destroy(&output->osd_tree->node);
+	wlr_scene_node_destroy(&output->cycle_osd_tree->node);
 	wlr_scene_node_destroy(&output->session_lock_tree->node);
 	if (output->workspace_osd) {
 		wlr_scene_node_destroy(&output->workspace_osd->node);
@@ -415,6 +414,41 @@ configure_new_output(struct server *server, struct output *output)
 	server->pending_output_layout_change--;
 }
 
+static uint64_t
+get_unused_output_id_bit(struct server *server)
+{
+	uint64_t used_id_bits = 0;
+	struct output *output;
+	wl_list_for_each(output, &server->outputs, link) {
+		used_id_bits |= output->id_bit;
+	}
+
+	if (used_id_bits == UINT64_MAX) {
+		return 0;
+	}
+
+	uint64_t id_bit = server->next_output_id_bit;
+	/*
+	 * __builtin_popcountll() should be supported by GCC & clang.
+	 * If it causes portability issues, just remove the assert.
+	 */
+	assert(__builtin_popcountll(id_bit) == 1);
+
+	while ((id_bit & used_id_bits) != 0) {
+		id_bit = (id_bit << 1) | (id_bit >> 63); /* rotate left */
+	}
+
+	/*
+	 * The current implementation of view_update_outputs() isn't
+	 * robust against ID bit re-use. Save the next bit here so we
+	 * can cycle through all 64 available bits, making re-use less
+	 * frequent (on a best-effort basis).
+	 */
+	server->next_output_id_bit = (id_bit << 1) | (id_bit >> 63);
+
+	return id_bit;
+}
+
 static void
 handle_new_output(struct wl_listener *listener, void *data)
 {
@@ -436,6 +470,12 @@ handle_new_output(struct wl_listener *listener, void *data)
 			 */
 			return;
 		}
+	}
+
+	uint64_t id_bit = get_unused_output_id_bit(server);
+	if (!id_bit) {
+		wlr_log(WLR_ERROR, "Cannot add more than 64 outputs");
+		return;
 	}
 
 	if (wlr_output_is_wl(wlr_output)) {
@@ -488,6 +528,7 @@ handle_new_output(struct wl_listener *listener, void *data)
 	output->wlr_output = wlr_output;
 	wlr_output->data = output;
 	output->server = server;
+	output->id_bit = id_bit;
 	output_state_init(output);
 
 	wl_list_insert(&server->outputs, &output->link);
@@ -501,7 +542,7 @@ handle_new_output(struct wl_listener *listener, void *data)
 	wl_signal_add(&wlr_output->events.request_state, &output->request_state);
 
 	wl_list_init(&output->regions);
-	wl_array_init(&output->osd_scene.items);
+	wl_list_init(&output->cycle_osd.items);
 
 	/*
 	 * Create layer-trees (background, bottom, top and overlay) and
@@ -510,18 +551,10 @@ handle_new_output(struct wl_listener *listener, void *data)
 	for (size_t i = 0; i < ARRAY_SIZE(output->layer_tree); i++) {
 		output->layer_tree[i] =
 			wlr_scene_tree_create(&server->scene->tree);
-		node_descriptor_create(&output->layer_tree[i]->node,
-			LAB_NODE_DESC_TREE, NULL);
 	}
 	output->layer_popup_tree = wlr_scene_tree_create(&server->scene->tree);
-	node_descriptor_create(&output->layer_popup_tree->node,
-		LAB_NODE_DESC_TREE, NULL);
-	output->osd_tree = wlr_scene_tree_create(&server->scene->tree);
-	node_descriptor_create(&output->osd_tree->node,
-		LAB_NODE_DESC_TREE, NULL);
+	output->cycle_osd_tree = wlr_scene_tree_create(&server->scene->tree);
 	output->session_lock_tree = wlr_scene_tree_create(&server->scene->tree);
-	node_descriptor_create(&output->session_lock_tree->node,
-		LAB_NODE_DESC_TREE, NULL);
 
 	/*
 	 * Set the z-positions to achieve the following order (from top to
@@ -544,7 +577,7 @@ handle_new_output(struct wl_listener *listener, void *data)
 	wlr_scene_node_place_below(&output->layer_tree[3]->node, menu_node);
 	wlr_scene_node_place_below(&output->layer_popup_tree->node, menu_node);
 
-	wlr_scene_node_raise_to_top(&output->osd_tree->node);
+	wlr_scene_node_raise_to_top(&output->cycle_osd_tree->node);
 	wlr_scene_node_raise_to_top(&output->session_lock_tree->node);
 
 	/*
@@ -559,6 +592,8 @@ handle_new_output(struct wl_listener *listener, void *data)
 
 	do_output_layout_change(server);
 }
+
+static void output_manager_init(struct server *server);
 
 void
 output_init(struct server *server)
@@ -590,6 +625,7 @@ output_init(struct server *server)
 		server->output_layout);
 
 	wl_list_init(&server->outputs);
+	server->next_output_id_bit = (1 << 0);
 
 	output_manager_init(server);
 }
@@ -899,7 +935,7 @@ handle_gamma_control_set_gamma(struct wl_listener *listener, void *data)
 	wlr_output_schedule_frame(output->wlr_output);
 }
 
-void
+static void
 output_manager_init(struct server *server)
 {
 	server->output_manager = wlr_output_manager_v1_create(server->wl_display);
@@ -977,7 +1013,7 @@ output_nearest_to_cursor(struct server *server)
 }
 
 struct output *
-output_get_adjacent(struct output *output, enum view_edge edge, bool wrap)
+output_get_adjacent(struct output *output, enum lab_edge edge, bool wrap)
 {
 	if (!output_is_usable(output)) {
 		wlr_log(WLR_ERROR,
@@ -985,8 +1021,8 @@ output_get_adjacent(struct output *output, enum view_edge edge, bool wrap)
 		return NULL;
 	}
 
-	enum wlr_direction direction;
-	if (!direction_from_view_edge(edge, &direction)) {
+	/* Allow only up/down/left/right */
+	if (!lab_edge_is_cardinal(edge)) {
 		return NULL;
 	}
 
@@ -998,16 +1034,18 @@ output_get_adjacent(struct output *output, enum view_edge edge, bool wrap)
 	struct wlr_output *new_output = NULL;
 	struct wlr_output *current_output = output->wlr_output;
 	struct wlr_output_layout *layout = output->server->output_layout;
-	new_output = wlr_output_layout_adjacent_output(layout, direction,
-		current_output, lx, ly);
+	/* Cast from enum lab_edge to enum wlr_direction is safe */
+	new_output = wlr_output_layout_adjacent_output(layout,
+		(enum wlr_direction)edge, current_output, lx, ly);
 
 	/*
 	 * Optionally wrap around from top-to-bottom or left-to-right, and vice
 	 * versa.
 	 */
 	if (wrap && !new_output) {
+		enum lab_edge opposite = lab_edge_invert(edge);
 		new_output = wlr_output_layout_farthest_output(layout,
-			direction_get_opposite(direction), current_output, lx, ly);
+			(enum wlr_direction)opposite, current_output, lx, ly);
 	}
 
 	/*
@@ -1150,16 +1188,14 @@ output_enable_adaptive_sync(struct output *output, bool enabled)
 	}
 }
 
-float
-output_max_scale(struct server *server)
+void
+output_set_has_fullscreen_view(struct output *output, bool has_fullscreen_view)
 {
-	/* Never return less than 1, in case outputs are disabled */
-	float scale = 1;
-	struct output *output;
-	wl_list_for_each(output, &server->outputs, link) {
-		if (output_is_usable(output)) {
-			scale = MAX(scale, output->wlr_output->scale);
-		}
+	if (rc.adaptive_sync != LAB_ADAPTIVE_SYNC_FULLSCREEN
+			|| !output_is_usable(output)) {
+		return;
 	}
-	return scale;
+	/* Enable adaptive sync if view is fullscreen */
+	output_enable_adaptive_sync(output, has_fullscreen_view);
+	output_state_commit(output);
 }

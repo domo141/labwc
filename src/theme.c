@@ -7,7 +7,6 @@
 
 #define _POSIX_C_SOURCE 200809L
 #include "theme.h"
-#include "config.h"
 #include <assert.h>
 #include <cairo.h>
 #include <drm_fourcc.h>
@@ -39,14 +38,13 @@ struct button {
 	const char *name;
 	const char *alt_name;
 	const char *fallback_button;  /* built-in 6x6 button */
-	enum ssd_part_type type;
+	enum lab_node_type type;
 	uint8_t state_set;
 };
 
-enum corner {
-	LAB_CORNER_UNKNOWN = 0,
-	LAB_CORNER_TOP_LEFT,
-	LAB_CORNER_TOP_RIGHT,
+enum rounded_corner {
+	ROUNDED_CORNER_TOP_LEFT,
+	ROUNDED_CORNER_TOP_RIGHT
 };
 
 struct rounded_corner_ctx {
@@ -55,7 +53,7 @@ struct rounded_corner_ctx {
 	double line_width;
 	cairo_pattern_t *fill_pattern;
 	float *border_color;
-	enum corner corner;
+	enum rounded_corner corner;
 };
 
 #define zero_array(arr) memset(arr, 0, sizeof(arr))
@@ -164,7 +162,7 @@ get_button_filename(char *buf, size_t len, const char *name, const char *postfix
 }
 
 static void
-load_button(struct theme *theme, struct button *b, int active)
+load_button(struct theme *theme, struct button *b, enum ssd_active_state active)
 {
 	struct lab_img *(*button_imgs)[LAB_BS_ALL + 1] =
 		theme->window[active].button_imgs;
@@ -218,9 +216,9 @@ load_button(struct theme *theme, struct button *b, int active)
 	 * If hover-icons do not exist, add fallbacks by copying the non-hover
 	 * variant and then adding an overlay.
 	 */
-	if (!*img && (b->state_set & LAB_BS_HOVERD)) {
+	if (!*img && (b->state_set & LAB_BS_HOVERED)) {
 		struct lab_img *non_hover_img =
-			button_imgs[b->type][b->state_set & ~LAB_BS_HOVERD];
+			button_imgs[b->type][b->state_set & ~LAB_BS_HOVERED];
 		*img = lab_img_copy(non_hover_img);
 		lab_img_add_modifier(*img,
 			draw_hover_overlay_on_button);
@@ -233,25 +231,16 @@ load_button(struct theme *theme, struct button *b, int active)
 	struct lab_img **rounded_img =
 		&button_imgs[b->type][b->state_set | LAB_BS_ROUNDED];
 
-	struct title_button *leftmost_button;
-	wl_list_for_each(leftmost_button,
-			&rc.title_buttons_left, link) {
-		if (leftmost_button->type == b->type) {
-			*rounded_img = lab_img_copy(*img);
-			lab_img_add_modifier(*rounded_img,
-				round_left_corner_button);
-		}
-		break;
+	if (rc.nr_title_buttons_left > 0
+			&& b->type == rc.title_buttons_left[0]) {
+		*rounded_img = lab_img_copy(*img);
+		lab_img_add_modifier(*rounded_img, round_left_corner_button);
 	}
-	struct title_button *rightmost_button;
-	wl_list_for_each_reverse(rightmost_button,
-			&rc.title_buttons_right, link) {
-		if (rightmost_button->type == b->type) {
-			*rounded_img = lab_img_copy(*img);
-			lab_img_add_modifier(*rounded_img,
-				round_right_corner_button);
-		}
-		break;
+	if (rc.nr_title_buttons_right > 0
+			&& b->type == rc.title_buttons_right
+				[rc.nr_title_buttons_right - 1]) {
+		*rounded_img = lab_img_copy(*img);
+		lab_img_add_modifier(*rounded_img, round_right_corner_button);
 	}
 }
 
@@ -291,102 +280,102 @@ load_buttons(struct theme *theme)
 	struct button buttons[] = { {
 		.name = "menu",
 		.fallback_button = (const char[]){ 0x00, 0x21, 0x33, 0x1E, 0x0C, 0x00 },
-		.type = LAB_SSD_BUTTON_WINDOW_MENU,
+		.type = LAB_NODE_BUTTON_WINDOW_MENU,
 		.state_set = 0,
 	}, {
 		.name = "iconify",
 		.fallback_button = (const char[]){ 0x00, 0x00, 0x00, 0x00, 0x3f, 0x3f },
-		.type = LAB_SSD_BUTTON_ICONIFY,
+		.type = LAB_NODE_BUTTON_ICONIFY,
 		.state_set = 0,
 	}, {
 		.name = "max",
 		.fallback_button = (const char[]){ 0x3f, 0x3f, 0x21, 0x21, 0x21, 0x3f },
-		.type = LAB_SSD_BUTTON_MAXIMIZE,
+		.type = LAB_NODE_BUTTON_MAXIMIZE,
 		.state_set = 0,
 	}, {
 		.name = "max_toggled",
 		.fallback_button = (const char[]){ 0x3e, 0x22, 0x2f, 0x29, 0x39, 0x0f },
-		.type = LAB_SSD_BUTTON_MAXIMIZE,
+		.type = LAB_NODE_BUTTON_MAXIMIZE,
 		.state_set = LAB_BS_TOGGLED,
 	}, {
 		.name = "shade",
 		.fallback_button = (const char[]){ 0x3f, 0x3f, 0x00, 0x0c, 0x1e, 0x3f },
-		.type = LAB_SSD_BUTTON_SHADE,
+		.type = LAB_NODE_BUTTON_SHADE,
 		.state_set = 0,
 	}, {
 		.name = "shade_toggled",
 		.fallback_button = (const char[]){ 0x3f, 0x3f, 0x00, 0x3f, 0x1e, 0x0c },
-		.type = LAB_SSD_BUTTON_SHADE,
+		.type = LAB_NODE_BUTTON_SHADE,
 		.state_set = LAB_BS_TOGGLED,
 	}, {
 		.name = "desk",
 		.fallback_button = (const char[]){ 0x33, 0x33, 0x00, 0x00, 0x33, 0x33 },
-		.type = LAB_SSD_BUTTON_OMNIPRESENT,
+		.type = LAB_NODE_BUTTON_OMNIPRESENT,
 		.state_set = 0,
 	}, {
 		.name = "desk_toggled",
 		.fallback_button = (const char[]){ 0x00, 0x1e, 0x1a, 0x16, 0x1e, 0x00 },
-		.type = LAB_SSD_BUTTON_OMNIPRESENT,
+		.type = LAB_NODE_BUTTON_OMNIPRESENT,
 		.state_set = LAB_BS_TOGGLED,
 	}, {
 		.name = "close",
 		.fallback_button = (const char[]){ 0x33, 0x3f, 0x1e, 0x1e, 0x3f, 0x33 },
-		.type = LAB_SSD_BUTTON_CLOSE,
+		.type = LAB_NODE_BUTTON_CLOSE,
 		.state_set = 0,
 	}, {
 		.name = "menu_hover",
-		.type = LAB_SSD_BUTTON_WINDOW_MENU,
-		.state_set = LAB_BS_HOVERD,
+		.type = LAB_NODE_BUTTON_WINDOW_MENU,
+		.state_set = LAB_BS_HOVERED,
 		/* no fallback (non-hover variant is used instead) */
 	}, {
 		.name = "iconify_hover",
-		.type = LAB_SSD_BUTTON_ICONIFY,
-		.state_set = LAB_BS_HOVERD,
+		.type = LAB_NODE_BUTTON_ICONIFY,
+		.state_set = LAB_BS_HOVERED,
 		/* no fallback (non-hover variant is used instead) */
 	}, {
 		.name = "max_hover",
-		.type = LAB_SSD_BUTTON_MAXIMIZE,
-		.state_set = LAB_BS_HOVERD,
+		.type = LAB_NODE_BUTTON_MAXIMIZE,
+		.state_set = LAB_BS_HOVERED,
 		/* no fallback (non-hover variant is used instead) */
 	}, {
 		.name = "max_toggled_hover",
 		.alt_name = "max_hover_toggled",
-		.type = LAB_SSD_BUTTON_MAXIMIZE,
-		.state_set = LAB_BS_TOGGLED | LAB_BS_HOVERD,
+		.type = LAB_NODE_BUTTON_MAXIMIZE,
+		.state_set = LAB_BS_TOGGLED | LAB_BS_HOVERED,
 		/* no fallback (non-hover variant is used instead) */
 	}, {
 		.name = "shade_hover",
-		.type = LAB_SSD_BUTTON_SHADE,
-		.state_set = LAB_BS_HOVERD,
+		.type = LAB_NODE_BUTTON_SHADE,
+		.state_set = LAB_BS_HOVERED,
 		/* no fallback (non-hover variant is used instead) */
 	}, {
 		.name = "shade_toggled_hover",
 		.alt_name = "shade_hover_toggled",
-		.type = LAB_SSD_BUTTON_SHADE,
-		.state_set = LAB_BS_TOGGLED | LAB_BS_HOVERD,
+		.type = LAB_NODE_BUTTON_SHADE,
+		.state_set = LAB_BS_TOGGLED | LAB_BS_HOVERED,
 		/* no fallback (non-hover variant is used instead) */
 	}, {
 		.name = "desk_hover",
 		/* no fallback (non-hover variant is used instead) */
-		.type = LAB_SSD_BUTTON_OMNIPRESENT,
-		.state_set = LAB_BS_HOVERD,
+		.type = LAB_NODE_BUTTON_OMNIPRESENT,
+		.state_set = LAB_BS_HOVERED,
 	}, {
 		.name = "desk_toggled_hover",
 		.alt_name = "desk_hover_toggled",
-		.type = LAB_SSD_BUTTON_OMNIPRESENT,
-		.state_set = LAB_BS_TOGGLED | LAB_BS_HOVERD,
+		.type = LAB_NODE_BUTTON_OMNIPRESENT,
+		.state_set = LAB_BS_TOGGLED | LAB_BS_HOVERED,
 		/* no fallback (non-hover variant is used instead) */
 	}, {
 		.name = "close_hover",
-		.type = LAB_SSD_BUTTON_CLOSE,
-		.state_set = LAB_BS_HOVERD,
+		.type = LAB_NODE_BUTTON_CLOSE,
+		.state_set = LAB_BS_HOVERED,
 		/* no fallback (non-hover variant is used instead) */
 	}, };
 
 	for (size_t i = 0; i < ARRAY_SIZE(buttons); ++i) {
 		struct button *b = &buttons[i];
-		load_button(theme, b, THEME_INACTIVE);
-		load_button(theme, b, THEME_ACTIVE);
+		load_button(theme, b, SSD_INACTIVE);
+		load_button(theme, b, SSD_ACTIVE);
 	}
 }
 
@@ -548,24 +537,24 @@ theme_builtin(struct theme *theme, struct server *server)
 	theme->window_titlebar_padding_height = 0;
 	theme->window_titlebar_padding_width = 0;
 
-	parse_hexstr("#aaaaaa", theme->window[THEME_ACTIVE].border_color);
-	parse_hexstr("#aaaaaa", theme->window[THEME_INACTIVE].border_color);
+	parse_hexstr("#aaaaaa", theme->window[SSD_ACTIVE].border_color);
+	parse_hexstr("#aaaaaa", theme->window[SSD_INACTIVE].border_color);
 
 	parse_hexstr("#ff0000", theme->window_toggled_keybinds_color);
 
-	theme->window[THEME_ACTIVE].title_bg.gradient = LAB_GRADIENT_NONE;
-	theme->window[THEME_INACTIVE].title_bg.gradient = LAB_GRADIENT_NONE;
-	parse_hexstr("#e1dedb", theme->window[THEME_ACTIVE].title_bg.color);
-	parse_hexstr("#f6f5f4", theme->window[THEME_INACTIVE].title_bg.color);
-	theme->window[THEME_ACTIVE].title_bg.color_split_to[0] = FLT_MIN;
-	theme->window[THEME_INACTIVE].title_bg.color_split_to[0] = FLT_MIN;
-	theme->window[THEME_ACTIVE].title_bg.color_to[0] = FLT_MIN;
-	theme->window[THEME_INACTIVE].title_bg.color_to[0] = FLT_MIN;
-	theme->window[THEME_ACTIVE].title_bg.color_to_split_to[0] = FLT_MIN;
-	theme->window[THEME_INACTIVE].title_bg.color_to_split_to[0] = FLT_MIN;
+	theme->window[SSD_ACTIVE].title_bg.gradient = LAB_GRADIENT_NONE;
+	theme->window[SSD_INACTIVE].title_bg.gradient = LAB_GRADIENT_NONE;
+	parse_hexstr("#e1dedb", theme->window[SSD_ACTIVE].title_bg.color);
+	parse_hexstr("#f6f5f4", theme->window[SSD_INACTIVE].title_bg.color);
+	theme->window[SSD_ACTIVE].title_bg.color_split_to[0] = FLT_MIN;
+	theme->window[SSD_INACTIVE].title_bg.color_split_to[0] = FLT_MIN;
+	theme->window[SSD_ACTIVE].title_bg.color_to[0] = FLT_MIN;
+	theme->window[SSD_INACTIVE].title_bg.color_to[0] = FLT_MIN;
+	theme->window[SSD_ACTIVE].title_bg.color_to_split_to[0] = FLT_MIN;
+	theme->window[SSD_INACTIVE].title_bg.color_to_split_to[0] = FLT_MIN;
 
-	parse_hexstr("#000000", theme->window[THEME_ACTIVE].label_text_color);
-	parse_hexstr("#000000", theme->window[THEME_INACTIVE].label_text_color);
+	parse_hexstr("#000000", theme->window[SSD_ACTIVE].label_text_color);
+	parse_hexstr("#000000", theme->window[SSD_INACTIVE].label_text_color);
 	theme->window_label_text_justify = parse_justification("Center");
 
 	theme->window_button_width = 26;
@@ -573,18 +562,18 @@ theme_builtin(struct theme *theme, struct server *server)
 	theme->window_button_spacing = 0;
 	theme->window_button_hover_bg_corner_radius = 0;
 
-	for (enum ssd_part_type type = LAB_SSD_BUTTON_FIRST;
-			type <= LAB_SSD_BUTTON_LAST; type++) {
+	for (enum lab_node_type type = LAB_NODE_BUTTON_FIRST;
+			type <= LAB_NODE_BUTTON_LAST; type++) {
 		parse_hexstr("#000000",
-			theme->window[THEME_INACTIVE].button_colors[type]);
+			theme->window[SSD_INACTIVE].button_colors[type]);
 		parse_hexstr("#000000",
-			theme->window[THEME_ACTIVE].button_colors[type]);
+			theme->window[SSD_ACTIVE].button_colors[type]);
 	}
 
-	theme->window[THEME_ACTIVE].shadow_size = 60;
-	theme->window[THEME_INACTIVE].shadow_size = 40;
-	parse_hexstr("#00000060", theme->window[THEME_ACTIVE].shadow_color);
-	parse_hexstr("#00000040", theme->window[THEME_INACTIVE].shadow_color);
+	theme->window[SSD_ACTIVE].shadow_size = 60;
+	theme->window[SSD_INACTIVE].shadow_size = 40;
+	parse_hexstr("#00000060", theme->window[SSD_ACTIVE].shadow_color);
+	parse_hexstr("#00000040", theme->window[SSD_INACTIVE].shadow_color);
 
 	theme->menu_overlap_x = 0;
 	theme->menu_overlap_y = 0;
@@ -609,13 +598,26 @@ theme_builtin(struct theme *theme, struct server *server)
 	theme->menu_title_text_justify = parse_justification("Center");
 	parse_hexstr("#ffffff", theme->menu_title_text_color);
 
-	theme->osd_window_switcher_width = 600;
-	theme->osd_window_switcher_width_is_percent = false;
-	theme->osd_window_switcher_padding = 4;
-	theme->osd_window_switcher_item_padding_x = 10;
-	theme->osd_window_switcher_item_padding_y = 1;
-	theme->osd_window_switcher_item_active_border_width = 2;
-	theme->osd_window_switcher_item_icon_size = -1;
+	theme->osd_window_switcher_classic.width = 600;
+	theme->osd_window_switcher_classic.width_is_percent = false;
+	theme->osd_window_switcher_classic.padding = 4;
+	theme->osd_window_switcher_classic.item_padding_x = 10;
+	theme->osd_window_switcher_classic.item_padding_y = 1;
+	theme->osd_window_switcher_classic.item_active_border_width = 2;
+	theme->osd_window_switcher_classic.item_active_border_color[0] = FLT_MIN;
+	theme->osd_window_switcher_classic.item_active_bg_color[0] = FLT_MIN;
+	theme->osd_window_switcher_classic.item_icon_size = -1;
+
+	theme->osd_window_switcher_thumbnail.max_width = 80;
+	theme->osd_window_switcher_thumbnail.max_width_is_percent = true;
+	theme->osd_window_switcher_thumbnail.padding = 4;
+	theme->osd_window_switcher_thumbnail.item_width = 300;
+	theme->osd_window_switcher_thumbnail.item_height = 250;
+	theme->osd_window_switcher_thumbnail.item_padding = 10;
+	theme->osd_window_switcher_thumbnail.item_active_border_width = 2;
+	theme->osd_window_switcher_thumbnail.item_active_border_color[0] = FLT_MIN;
+	theme->osd_window_switcher_thumbnail.item_active_bg_color[0] = FLT_MIN;
+	theme->osd_window_switcher_thumbnail.item_icon_size = 60;
 
 	/* inherit settings in post_processing() if not set elsewhere */
 	theme->osd_window_switcher_preview_border_width = INT_MIN;
@@ -680,6 +682,11 @@ entry(struct theme *theme, const char *key, const char *value)
 		return;
 	}
 
+	struct window_switcher_classic_theme *switcher_classic_theme =
+		&theme->osd_window_switcher_classic;
+	struct window_switcher_thumbnail_theme *switcher_thumb_theme =
+		&theme->osd_window_switcher_thumbnail;
+
 	/*
 	 * Note that in order for the pattern match to apply to more than just
 	 * the first instance, "else if" cannot be used throughout this function
@@ -704,15 +711,15 @@ entry(struct theme *theme, const char *key, const char *value)
 	}
 
 	if (match_glob(key, "window.active.border.color")) {
-		parse_color(value, theme->window[THEME_ACTIVE].border_color);
+		parse_color(value, theme->window[SSD_ACTIVE].border_color);
 	}
 	if (match_glob(key, "window.inactive.border.color")) {
-		parse_color(value, theme->window[THEME_INACTIVE].border_color);
+		parse_color(value, theme->window[SSD_INACTIVE].border_color);
 	}
 	/* border.color is obsolete, but handled for backward compatibility */
 	if (match_glob(key, "border.color")) {
-		parse_color(value, theme->window[THEME_ACTIVE].border_color);
-		parse_color(value, theme->window[THEME_INACTIVE].border_color);
+		parse_color(value, theme->window[SSD_ACTIVE].border_color);
+		parse_color(value, theme->window[SSD_INACTIVE].border_color);
 	}
 
 	if (match_glob(key, "window.active.indicator.toggled-keybind.color")) {
@@ -720,41 +727,41 @@ entry(struct theme *theme, const char *key, const char *value)
 	}
 
 	if (match_glob(key, "window.active.title.bg")) {
-		theme->window[THEME_ACTIVE].title_bg.gradient = parse_gradient(value);
+		theme->window[SSD_ACTIVE].title_bg.gradient = parse_gradient(value);
 	}
 	if (match_glob(key, "window.inactive.title.bg")) {
-		theme->window[THEME_INACTIVE].title_bg.gradient = parse_gradient(value);
+		theme->window[SSD_INACTIVE].title_bg.gradient = parse_gradient(value);
 	}
 	if (match_glob(key, "window.active.title.bg.color")) {
-		parse_color(value, theme->window[THEME_ACTIVE].title_bg.color);
+		parse_color(value, theme->window[SSD_ACTIVE].title_bg.color);
 	}
 	if (match_glob(key, "window.inactive.title.bg.color")) {
-		parse_color(value, theme->window[THEME_INACTIVE].title_bg.color);
+		parse_color(value, theme->window[SSD_INACTIVE].title_bg.color);
 	}
 	if (match_glob(key, "window.active.title.bg.color.splitTo")) {
-		parse_color(value, theme->window[THEME_ACTIVE].title_bg.color_split_to);
+		parse_color(value, theme->window[SSD_ACTIVE].title_bg.color_split_to);
 	}
 	if (match_glob(key, "window.inactive.title.bg.color.splitTo")) {
-		parse_color(value, theme->window[THEME_INACTIVE].title_bg.color_split_to);
+		parse_color(value, theme->window[SSD_INACTIVE].title_bg.color_split_to);
 	}
 	if (match_glob(key, "window.active.title.bg.colorTo")) {
-		parse_color(value, theme->window[THEME_ACTIVE].title_bg.color_to);
+		parse_color(value, theme->window[SSD_ACTIVE].title_bg.color_to);
 	}
 	if (match_glob(key, "window.inactive.title.bg.colorTo")) {
-		parse_color(value, theme->window[THEME_INACTIVE].title_bg.color_to);
+		parse_color(value, theme->window[SSD_INACTIVE].title_bg.color_to);
 	}
 	if (match_glob(key, "window.active.title.bg.colorTo.splitTo")) {
-		parse_color(value, theme->window[THEME_ACTIVE].title_bg.color_to_split_to);
+		parse_color(value, theme->window[SSD_ACTIVE].title_bg.color_to_split_to);
 	}
 	if (match_glob(key, "window.inactive.title.bg.colorTo.splitTo")) {
-		parse_color(value, theme->window[THEME_INACTIVE].title_bg.color_to_split_to);
+		parse_color(value, theme->window[SSD_INACTIVE].title_bg.color_to_split_to);
 	}
 
 	if (match_glob(key, "window.active.label.text.color")) {
-		parse_color(value, theme->window[THEME_ACTIVE].label_text_color);
+		parse_color(value, theme->window[SSD_ACTIVE].label_text_color);
 	}
 	if (match_glob(key, "window.inactive.label.text.color")) {
-		parse_color(value, theme->window[THEME_INACTIVE].label_text_color);
+		parse_color(value, theme->window[SSD_INACTIVE].label_text_color);
 	}
 	if (match_glob(key, "window.label.text.justify")) {
 		theme->window_label_text_justify = parse_justification(value);
@@ -787,88 +794,88 @@ entry(struct theme *theme, const char *key, const char *value)
 
 	/* universal button */
 	if (match_glob(key, "window.active.button.unpressed.image.color")) {
-		for (enum ssd_part_type type = LAB_SSD_BUTTON_FIRST;
-				type <= LAB_SSD_BUTTON_LAST; type++) {
+		for (enum lab_node_type type = LAB_NODE_BUTTON_FIRST;
+				type <= LAB_NODE_BUTTON_LAST; type++) {
 			parse_color(value,
-				theme->window[THEME_ACTIVE].button_colors[type]);
+				theme->window[SSD_ACTIVE].button_colors[type]);
 		}
 	}
 	if (match_glob(key, "window.inactive.button.unpressed.image.color")) {
-		for (enum ssd_part_type type = LAB_SSD_BUTTON_FIRST;
-				type <= LAB_SSD_BUTTON_LAST; type++) {
+		for (enum lab_node_type type = LAB_NODE_BUTTON_FIRST;
+				type <= LAB_NODE_BUTTON_LAST; type++) {
 			parse_color(value,
-				theme->window[THEME_INACTIVE].button_colors[type]);
+				theme->window[SSD_INACTIVE].button_colors[type]);
 		}
 	}
 
 	/* individual buttons */
 	if (match_glob(key, "window.active.button.menu.unpressed.image.color")) {
-		parse_color(value, theme->window[THEME_ACTIVE]
-			.button_colors[LAB_SSD_BUTTON_WINDOW_MENU]);
-		parse_color(value, theme->window[THEME_ACTIVE]
-			.button_colors[LAB_SSD_BUTTON_WINDOW_ICON]);
+		parse_color(value, theme->window[SSD_ACTIVE]
+			.button_colors[LAB_NODE_BUTTON_WINDOW_MENU]);
+		parse_color(value, theme->window[SSD_ACTIVE]
+			.button_colors[LAB_NODE_BUTTON_WINDOW_ICON]);
 	}
 	if (match_glob(key, "window.active.button.iconify.unpressed.image.color")) {
-		parse_color(value, theme->window[THEME_ACTIVE]
-			.button_colors[LAB_SSD_BUTTON_ICONIFY]);
+		parse_color(value, theme->window[SSD_ACTIVE]
+			.button_colors[LAB_NODE_BUTTON_ICONIFY]);
 	}
 	if (match_glob(key, "window.active.button.max.unpressed.image.color")) {
-		parse_color(value, theme->window[THEME_ACTIVE]
-			.button_colors[LAB_SSD_BUTTON_MAXIMIZE]);
+		parse_color(value, theme->window[SSD_ACTIVE]
+			.button_colors[LAB_NODE_BUTTON_MAXIMIZE]);
 	}
 	if (match_glob(key, "window.active.button.shade.unpressed.image.color")) {
-		parse_color(value, theme->window[THEME_ACTIVE]
-			.button_colors[LAB_SSD_BUTTON_SHADE]);
+		parse_color(value, theme->window[SSD_ACTIVE]
+			.button_colors[LAB_NODE_BUTTON_SHADE]);
 	}
 	if (match_glob(key, "window.active.button.desk.unpressed.image.color")) {
-		parse_color(value, theme->window[THEME_ACTIVE]
-			.button_colors[LAB_SSD_BUTTON_OMNIPRESENT]);
+		parse_color(value, theme->window[SSD_ACTIVE]
+			.button_colors[LAB_NODE_BUTTON_OMNIPRESENT]);
 	}
 	if (match_glob(key, "window.active.button.close.unpressed.image.color")) {
-		parse_color(value, theme->window[THEME_ACTIVE]
-			.button_colors[LAB_SSD_BUTTON_CLOSE]);
+		parse_color(value, theme->window[SSD_ACTIVE]
+			.button_colors[LAB_NODE_BUTTON_CLOSE]);
 	}
 	if (match_glob(key, "window.inactive.button.menu.unpressed.image.color")) {
-		parse_color(value, theme->window[THEME_INACTIVE]
-			.button_colors[LAB_SSD_BUTTON_WINDOW_MENU]);
-		parse_color(value, theme->window[THEME_INACTIVE]
-			.button_colors[LAB_SSD_BUTTON_WINDOW_ICON]);
+		parse_color(value, theme->window[SSD_INACTIVE]
+			.button_colors[LAB_NODE_BUTTON_WINDOW_MENU]);
+		parse_color(value, theme->window[SSD_INACTIVE]
+			.button_colors[LAB_NODE_BUTTON_WINDOW_ICON]);
 	}
 	if (match_glob(key, "window.inactive.button.iconify.unpressed.image.color")) {
-		parse_color(value, theme->window[THEME_INACTIVE]
-			.button_colors[LAB_SSD_BUTTON_ICONIFY]);
+		parse_color(value, theme->window[SSD_INACTIVE]
+			.button_colors[LAB_NODE_BUTTON_ICONIFY]);
 	}
 	if (match_glob(key, "window.inactive.button.max.unpressed.image.color")) {
-		parse_color(value, theme->window[THEME_INACTIVE]
-			.button_colors[LAB_SSD_BUTTON_MAXIMIZE]);
+		parse_color(value, theme->window[SSD_INACTIVE]
+			.button_colors[LAB_NODE_BUTTON_MAXIMIZE]);
 	}
 	if (match_glob(key, "window.inactive.button.shade.unpressed.image.color")) {
-		parse_color(value, theme->window[THEME_INACTIVE]
-			.button_colors[LAB_SSD_BUTTON_SHADE]);
+		parse_color(value, theme->window[SSD_INACTIVE]
+			.button_colors[LAB_NODE_BUTTON_SHADE]);
 	}
 	if (match_glob(key, "window.inactive.button.desk.unpressed.image.color")) {
-		parse_color(value, theme->window[THEME_INACTIVE]
-			.button_colors[LAB_SSD_BUTTON_OMNIPRESENT]);
+		parse_color(value, theme->window[SSD_INACTIVE]
+			.button_colors[LAB_NODE_BUTTON_OMNIPRESENT]);
 	}
 	if (match_glob(key, "window.inactive.button.close.unpressed.image.color")) {
-		parse_color(value, theme->window[THEME_INACTIVE]
-			.button_colors[LAB_SSD_BUTTON_CLOSE]);
+		parse_color(value, theme->window[SSD_INACTIVE]
+			.button_colors[LAB_NODE_BUTTON_CLOSE]);
 	}
 
 	/* window drop-shadows */
 	if (match_glob(key, "window.active.shadow.size")) {
-		theme->window[THEME_ACTIVE].shadow_size = get_int_if_positive(
+		theme->window[SSD_ACTIVE].shadow_size = get_int_if_positive(
 			value, "window.active.shadow.size");
 	}
 	if (match_glob(key, "window.inactive.shadow.size")) {
-		theme->window[THEME_INACTIVE].shadow_size = get_int_if_positive(
+		theme->window[SSD_INACTIVE].shadow_size = get_int_if_positive(
 			value, "window.inactive.shadow.size");
 	}
 	if (match_glob(key, "window.active.shadow.color")) {
-		parse_color(value, theme->window[THEME_ACTIVE].shadow_color);
+		parse_color(value, theme->window[SSD_ACTIVE].shadow_color);
 	}
 	if (match_glob(key, "window.inactive.shadow.color")) {
-		parse_color(value, theme->window[THEME_INACTIVE].shadow_color);
+		parse_color(value, theme->window[SSD_INACTIVE].shadow_color);
 	}
 
 	if (match_glob(key, "menu.overlap.x")) {
@@ -950,39 +957,93 @@ entry(struct theme *theme, const char *key, const char *value)
 	if (match_glob(key, "osd.border.color")) {
 		parse_color(value, theme->osd_border_color);
 	}
-	if (match_glob(key, "osd.window-switcher.width")) {
+	/* classic window switcher */
+	if (match_glob(key, "osd.window-switcher.style-classic.width")
+			|| match_glob(key, "osd.window-switcher.width")) {
 		if (strrchr(value, '%')) {
-			theme->osd_window_switcher_width_is_percent = true;
+			switcher_classic_theme->width_is_percent = true;
 		} else {
-			theme->osd_window_switcher_width_is_percent = false;
+			switcher_classic_theme->width_is_percent = false;
 		}
-		theme->osd_window_switcher_width = get_int_if_positive(
-			value, "osd.window-switcher.width");
+		switcher_classic_theme->width = get_int_if_positive(value,
+			"osd.window-switcher.style-classic.width");
 	}
-	if (match_glob(key, "osd.window-switcher.padding")) {
-		theme->osd_window_switcher_padding = get_int_if_positive(
-			value, "osd.window-switcher.padding");
+	if (match_glob(key, "osd.window-switcher.style-classic.padding")
+			|| match_glob(key, "osd.window-switcher.padding")) {
+		switcher_classic_theme->padding = get_int_if_positive(value,
+			"osd.window-switcher.style-classic.padding");
 	}
-	if (match_glob(key, "osd.window-switcher.item.padding.x")) {
-		theme->osd_window_switcher_item_padding_x =
-			get_int_if_positive(
-				value, "osd.window-switcher.item.padding.x");
+	if (match_glob(key, "osd.window-switcher.style-classic.item.padding.x")
+			|| match_glob(key, "osd.window-switcher.item.padding.x")) {
+		switcher_classic_theme->item_padding_x =
+			get_int_if_positive(value,
+				"osd.window-switcher.style-classic.item.padding.x");
 	}
-	if (match_glob(key, "osd.window-switcher.item.padding.y")) {
-		theme->osd_window_switcher_item_padding_y =
-			get_int_if_positive(
-				value, "osd.window-switcher.item.padding.y");
+	if (match_glob(key, "osd.window-switcher.style-classic.item.padding.y")
+			|| match_glob(key, "osd.window-switcher.item.padding.y")) {
+		switcher_classic_theme->item_padding_y =
+			get_int_if_positive(value,
+				"osd.window-switcher.style-classic.item.padding.y");
 	}
-	if (match_glob(key, "osd.window-switcher.item.active.border.width")) {
-		theme->osd_window_switcher_item_active_border_width =
-			get_int_if_positive(
-				value, "osd.window-switcher.item.active.border.width");
+	if (match_glob(key, "osd.window-switcher.style-classic.item.active.border.width")
+			|| match_glob(key, "osd.window-switcher.item.active.border.width")) {
+		switcher_classic_theme->item_active_border_width =
+			get_int_if_positive(value,
+				"osd.window-switcher.style-classic.item.active.border.width");
 	}
-	if (match_glob(key, "osd.window-switcher.item.icon.size")) {
-		theme->osd_window_switcher_item_icon_size =
-			get_int_if_positive(
-				value, "osd.window-switcher.item.icon.size");
+	if (match_glob(key, "osd.window-switcher.style-classic.item.active.border.color")) {
+		parse_color(value, switcher_classic_theme->item_active_border_color);
 	}
+	if (match_glob(key, "osd.window-switcher.style-classic.item.active.bg.color")) {
+		parse_color(value, switcher_classic_theme->item_active_bg_color);
+	}
+	if (match_glob(key, "osd.window-switcher.style-classic.item.icon.size")
+			|| match_glob(key, "osd.window-switcher.item.icon.size")) {
+		switcher_classic_theme->item_icon_size =
+			get_int_if_positive(value,
+				"osd.window-switcher.style-classic.item.icon.size");
+	}
+	/* thumbnail window switcher */
+	if (match_glob(key, "osd.window-switcher.style-thumbnail.width.max")) {
+		if (strrchr(value, '%')) {
+			switcher_thumb_theme->max_width_is_percent = true;
+		} else {
+			switcher_thumb_theme->max_width_is_percent = false;
+		}
+		switcher_thumb_theme->max_width = get_int_if_positive(
+			value, "osd.window-switcher.style-thumbnail.width.max");
+	}
+	if (match_glob(key, "osd.window-switcher.style-thumbnail.padding")) {
+		switcher_thumb_theme->padding = get_int_if_positive(
+			value, "osd.window-switcher.style-thumbnail.padding");
+	}
+	if (match_glob(key, "osd.window-switcher.style-thumbnail.item.width")) {
+		switcher_thumb_theme->item_width = get_int_if_positive(
+			value, "osd.window-switcher.style-thumbnail.item.width");
+	}
+	if (match_glob(key, "osd.window-switcher.style-thumbnail.item.height")) {
+		switcher_thumb_theme->item_height = get_int_if_positive(
+			value, "osd.window-switcher.style-thumbnail.item.height");
+	}
+	if (match_glob(key, "osd.window-switcher.style-thumbnail.item.padding")) {
+		switcher_thumb_theme->item_padding = get_int_if_positive(
+			value, "osd.window-switcher.style-thumbnail.item.padding");
+	}
+	if (match_glob(key, "osd.window-switcher.style-thumbnail.item.active.border.width")) {
+		switcher_thumb_theme->item_active_border_width = get_int_if_positive(
+			value, "osd.window-switcher.style-thumbnail.item.active.border.width");
+	}
+	if (match_glob(key, "osd.window-switcher.style-thumbnail.item.active.border.color")) {
+		parse_color(value, switcher_thumb_theme->item_active_border_color);
+	}
+	if (match_glob(key, "osd.window-switcher.style-thumbnail.item.active.bg.color")) {
+		parse_color(value, switcher_thumb_theme->item_active_bg_color);
+	}
+	if (match_glob(key, "osd.window-switcher.style-thumbnail.item.icon.size")) {
+		switcher_thumb_theme->item_icon_size = get_int_if_positive(
+			value, "osd.window-switcher.style-thumbnail.item.icon.size");
+	}
+
 	if (match_glob(key, "osd.window-switcher.preview.border.width")) {
 		theme->osd_window_switcher_preview_border_width =
 			get_int_if_positive(
@@ -1110,10 +1171,6 @@ theme_read(struct theme *theme, struct wl_list *paths)
 static struct lab_data_buffer *
 rounded_rect(struct rounded_corner_ctx *ctx)
 {
-	if (ctx->corner == LAB_CORNER_UNKNOWN) {
-		return NULL;
-	}
-
 	double w = ctx->box->width;
 	double h = ctx->box->height;
 	double r = ctx->radius;
@@ -1147,20 +1204,18 @@ rounded_rect(struct rounded_corner_ctx *ctx)
 	cairo_set_line_width(cairo, 0.0);
 	cairo_new_sub_path(cairo);
 	switch (ctx->corner) {
-	case LAB_CORNER_TOP_LEFT:
+	case ROUNDED_CORNER_TOP_LEFT:
 		cairo_arc(cairo, r, r, r, 180 * deg, 270 * deg);
 		cairo_line_to(cairo, w, 0);
 		cairo_line_to(cairo, w, h);
 		cairo_line_to(cairo, 0, h);
 		break;
-	case LAB_CORNER_TOP_RIGHT:
+	case ROUNDED_CORNER_TOP_RIGHT:
 		cairo_arc(cairo, w - r, r, r, -90 * deg, 0 * deg);
 		cairo_line_to(cairo, w, h);
 		cairo_line_to(cairo, 0, h);
 		cairo_line_to(cairo, 0, 0);
 		break;
-	default:
-		wlr_log(WLR_ERROR, "unknown corner type");
 	}
 	cairo_close_path(cairo);
 	cairo_set_operator(cairo, CAIRO_OPERATOR_SOURCE);
@@ -1203,20 +1258,18 @@ rounded_rect(struct rounded_corner_ctx *ctx)
 	cairo_set_line_width(cairo, ctx->line_width);
 	double half_line_width = ctx->line_width / 2.0;
 	switch (ctx->corner) {
-	case LAB_CORNER_TOP_LEFT:
+	case ROUNDED_CORNER_TOP_LEFT:
 		cairo_move_to(cairo, half_line_width, h);
 		cairo_line_to(cairo, half_line_width, r);
 		cairo_move_to(cairo, r, half_line_width);
 		cairo_line_to(cairo, w, half_line_width);
 		break;
-	case LAB_CORNER_TOP_RIGHT:
+	case ROUNDED_CORNER_TOP_RIGHT:
 		cairo_move_to(cairo, 0, half_line_width);
 		cairo_line_to(cairo, w - r, half_line_width);
 		cairo_move_to(cairo, w - half_line_width, r);
 		cairo_line_to(cairo, w - half_line_width, h);
 		break;
-	default:
-		wlr_log(WLR_ERROR, "unknown corner type");
 	}
 	cairo_stroke(cairo);
 
@@ -1264,15 +1317,13 @@ rounded_rect(struct rounded_corner_ctx *ctx)
 	cairo_set_line_width(cairo, line_width);
 	half_line_width = line_width / 2.0;
 	switch (ctx->corner) {
-	case LAB_CORNER_TOP_LEFT:
+	case ROUNDED_CORNER_TOP_LEFT:
 		cairo_move_to(cairo, half_line_width, r);
 		cairo_arc(cairo, r, r, r - half_line_width, 180 * deg, 270 * deg);
 		break;
-	case LAB_CORNER_TOP_RIGHT:
+	case ROUNDED_CORNER_TOP_RIGHT:
 		cairo_move_to(cairo, w - r, half_line_width);
 		cairo_arc(cairo, w - r, r, r - half_line_width, -90 * deg, 0 * deg);
-		break;
-	default:
 		break;
 	}
 	cairo_stroke(cairo);
@@ -1345,7 +1396,8 @@ create_titlebar_fill(cairo_pattern_t *pattern, int height)
 static void
 create_backgrounds(struct theme *theme)
 {
-	for (int active = THEME_INACTIVE; active <= THEME_ACTIVE; active++) {
+	enum ssd_active_state active;
+	FOR_EACH_ACTIVE_STATE(active) {
 		theme->window[active].titlebar_pattern = create_titlebar_pattern(
 			&theme->window[active].title_bg,
 			theme->titlebar_height);
@@ -1367,17 +1419,18 @@ create_corners(struct theme *theme)
 		.height = theme->titlebar_height + theme->border_width,
 	};
 
-	for (int active = THEME_INACTIVE; active <= THEME_ACTIVE; active++) {
+	enum ssd_active_state active;
+	FOR_EACH_ACTIVE_STATE(active) {
 		struct rounded_corner_ctx ctx = {
 			.box = &box,
 			.radius = rc.corner_radius,
 			.line_width = theme->border_width,
 			.fill_pattern = theme->window[active].titlebar_pattern,
 			.border_color = theme->window[active].border_color,
-			.corner = LAB_CORNER_TOP_LEFT,
+			.corner = ROUNDED_CORNER_TOP_LEFT,
 		};
 		theme->window[active].corner_top_left_normal = rounded_rect(&ctx);
-		ctx.corner = LAB_CORNER_TOP_RIGHT;
+		ctx.corner = ROUNDED_CORNER_TOP_RIGHT;
 		theme->window[active].corner_top_right_normal = rounded_rect(&ctx);
 	}
 }
@@ -1497,7 +1550,7 @@ shadow_corner_gradient(struct lab_data_buffer *buffer, int visible_size,
 }
 
 static void
-create_shadow(struct theme *theme, int active)
+create_shadow(struct theme *theme, enum ssd_active_state active)
 {
 	/* Size of shadow visible extending beyond the window */
 	int visible_size = theme->window[active].shadow_size;
@@ -1539,8 +1592,8 @@ create_shadow(struct theme *theme, int active)
 static void
 create_shadows(struct theme *theme)
 {
-	create_shadow(theme, THEME_INACTIVE);
-	create_shadow(theme, THEME_ACTIVE);
+	create_shadow(theme, SSD_INACTIVE);
+	create_shadow(theme, SSD_ACTIVE);
 }
 
 static void
@@ -1590,13 +1643,43 @@ get_titlebar_height(struct theme *theme)
 	return h;
 }
 
+/* Blend foreground color (with new alpha) with background color */
+static void
+blend_color_with_bg(float *dst, float *fg, float fg_a, float *bg)
+{
+	/* Guard against zero division */
+	if (fg[3] <= 0.0f) {
+		memset(dst, 0, sizeof(float) * 4);
+		return;
+	}
+
+	/* Redo premultiplication to update foreground alpha */
+	float new_fg[4] = {
+		fg[0] / fg[3] * fg_a,
+		fg[1] / fg[3] * fg_a,
+		fg[2] / fg[3] * fg_a,
+		fg_a,
+	};
+
+	/* Blend colors */
+	dst[0] = new_fg[0] + bg[0] * (1.0f - new_fg[3]);
+	dst[1] = new_fg[1] + bg[1] * (1.0f - new_fg[3]);
+	dst[2] = new_fg[2] + bg[2] * (1.0f - new_fg[3]);
+	dst[3] = new_fg[3] + bg[3] * (1.0f - new_fg[3]);
+}
+
 static void
 post_processing(struct theme *theme)
 {
+	struct window_switcher_classic_theme *switcher_classic_theme =
+		&theme->osd_window_switcher_classic;
+	struct window_switcher_thumbnail_theme *switcher_thumb_theme =
+		&theme->osd_window_switcher_thumbnail;
+
 	theme->titlebar_height = get_titlebar_height(theme);
 
-	fill_background_colors(&theme->window[THEME_INACTIVE].title_bg);
-	fill_background_colors(&theme->window[THEME_ACTIVE].title_bg);
+	fill_background_colors(&theme->window[SSD_INACTIVE].title_bg);
+	fill_background_colors(&theme->window[SSD_ACTIVE].title_bg);
 
 	theme->menu_item_height = font_height(&rc.font_menuitem)
 		+ 2 * theme->menu_items_padding_y;
@@ -1605,14 +1688,15 @@ post_processing(struct theme *theme)
 		+ 2 * theme->menu_items_padding_y;
 
 	int osd_font_height = font_height(&rc.font_osd);
-	if (theme->osd_window_switcher_item_icon_size <= 0) {
-		theme->osd_window_switcher_item_icon_size = osd_font_height;
+	switcher_thumb_theme->title_height = osd_font_height;
+	if (switcher_classic_theme->item_icon_size <= 0) {
+		switcher_classic_theme->item_icon_size = osd_font_height;
 	}
 	int osd_field_height =
-		MAX(osd_font_height, theme->osd_window_switcher_item_icon_size);
-	theme->osd_window_switcher_item_height = osd_field_height
-		+ 2 * theme->osd_window_switcher_item_padding_y
-		+ 2 * theme->osd_window_switcher_item_active_border_width;
+		MAX(osd_font_height, switcher_classic_theme->item_icon_size);
+	switcher_classic_theme->item_height = osd_field_height
+		+ 2 * switcher_classic_theme->item_padding_y
+		+ 2 * switcher_classic_theme->item_active_border_width;
 
 	if (rc.corner_radius >= theme->titlebar_height) {
 		rc.corner_radius = theme->titlebar_height - 1;
@@ -1640,14 +1724,14 @@ post_processing(struct theme *theme)
 	}
 	if (theme->menu_border_color[0] == FLT_MIN) {
 		memcpy(theme->menu_border_color,
-			theme->window[THEME_ACTIVE].border_color,
+			theme->window[SSD_ACTIVE].border_color,
 			sizeof(theme->menu_border_color));
 	}
 
 	/* Inherit OSD settings if not set */
 	if (theme->osd_bg_color[0] == FLT_MIN) {
 		memcpy(theme->osd_bg_color,
-			theme->window[THEME_ACTIVE].title_bg.color,
+			theme->window[SSD_ACTIVE].title_bg.color,
 			sizeof(theme->osd_bg_color));
 	}
 	if (theme->osd_border_width == INT_MIN) {
@@ -1655,7 +1739,7 @@ post_processing(struct theme *theme)
 	}
 	if (theme->osd_label_text_color[0] == FLT_MIN) {
 		memcpy(theme->osd_label_text_color,
-			theme->window[THEME_ACTIVE].label_text_color,
+			theme->window[SSD_ACTIVE].label_text_color,
 			sizeof(theme->osd_label_text_color));
 	}
 	if (theme->osd_border_color[0] == FLT_MIN) {
@@ -1672,15 +1756,31 @@ post_processing(struct theme *theme)
 		memcpy(theme->osd_border_color, theme->osd_label_text_color,
 			sizeof(theme->osd_border_color));
 	}
+	if (switcher_classic_theme->item_active_border_color[0] == FLT_MIN) {
+		blend_color_with_bg(switcher_classic_theme->item_active_border_color,
+			theme->osd_label_text_color, 0.50, theme->osd_bg_color);
+	}
+	if (switcher_classic_theme->item_active_bg_color[0] == FLT_MIN) {
+		blend_color_with_bg(switcher_classic_theme->item_active_bg_color,
+			theme->osd_label_text_color, 0.15, theme->osd_bg_color);
+	}
+	if (switcher_thumb_theme->item_active_border_color[0] == FLT_MIN) {
+		blend_color_with_bg(switcher_thumb_theme->item_active_border_color,
+			theme->osd_label_text_color, 0.50, theme->osd_bg_color);
+	}
+	if (switcher_thumb_theme->item_active_bg_color[0] == FLT_MIN) {
+		blend_color_with_bg(switcher_thumb_theme->item_active_bg_color,
+			theme->osd_label_text_color, 0.15, theme->osd_bg_color);
+	}
 	if (theme->osd_workspace_switcher_boxes_width == 0) {
 		theme->osd_workspace_switcher_boxes_height = 0;
 	}
 	if (theme->osd_workspace_switcher_boxes_height == 0) {
 		theme->osd_workspace_switcher_boxes_width = 0;
 	}
-	if (theme->osd_window_switcher_width_is_percent) {
-		theme->osd_window_switcher_width =
-			MIN(theme->osd_window_switcher_width, 100);
+	if (switcher_classic_theme->width_is_percent) {
+		switcher_classic_theme->width =
+			MIN(switcher_classic_theme->width, 100);
 	}
 	if (theme->osd_window_switcher_preview_border_width == INT_MIN) {
 		theme->osd_window_switcher_preview_border_width =
@@ -1752,18 +1852,19 @@ static void destroy_img(struct lab_img **img)
 void
 theme_finish(struct theme *theme)
 {
-	for (enum ssd_part_type type = LAB_SSD_BUTTON_FIRST;
-			type <= LAB_SSD_BUTTON_LAST; type++) {
+	for (enum lab_node_type type = LAB_NODE_BUTTON_FIRST;
+			type <= LAB_NODE_BUTTON_LAST; type++) {
 		for (uint8_t state_set = LAB_BS_DEFAULT;
 				state_set <= LAB_BS_ALL; state_set++) {
-			destroy_img(&theme->window[THEME_INACTIVE]
+			destroy_img(&theme->window[SSD_INACTIVE]
 				.button_imgs[type][state_set]);
-			destroy_img(&theme->window[THEME_ACTIVE]
+			destroy_img(&theme->window[SSD_ACTIVE]
 				.button_imgs[type][state_set]);
 		}
 	}
 
-	for (int active = THEME_INACTIVE; active <= THEME_ACTIVE; active++) {
+	enum ssd_active_state active;
+	FOR_EACH_ACTIVE_STATE(active) {
 		zfree_pattern(theme->window[active].titlebar_pattern);
 		zdrop(&theme->window[active].titlebar_fill);
 		zdrop(&theme->window[active].corner_top_left_normal);

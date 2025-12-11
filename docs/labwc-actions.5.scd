@@ -51,8 +51,12 @@ Actions are used in menus and keyboard/mouse bindings.
 	another window or screen edge. If set to "no", only move to
 	the next screen edge. Default is yes.
 
-*<action name="Resize" />*
+*<action name="Resize" direction="value" />*
 	Begin interactive resize of window under cursor.
+
+	*direction* [up|down|left|right|up-left|up-right|down-left|down-right]
+	Edge or corner from which to start resizing. If this is not provided,
+	the direction is inferred from the cursor position.
 
 *<action name="ResizeRelative" left="" right="" top="" bottom="" />*
 	Resize window relative to its current size. Values of left, right,
@@ -92,11 +96,18 @@ Actions are used in menus and keyboard/mouse bindings.
 	Move window relative to its current position. Positive value of x moves
 	it right, negative left. Positive value of y moves it down, negative up.
 
-*<action name="ToggleSnapToEdge" direction="value" />*++
-*<action name="SnapToEdge" direction="value" />*
-	Resize window to fill half the output in the given direction. Supports
-	directions "left", "up", "right", "down", "up-left", "up-right", "down-left",
-	"down-right" and "center".
+*<action name="ToggleSnapToEdge" direction="value" combine="value" />*++
+*<action name="SnapToEdge" direction="value" combine="value" />*
+	Resize window to fill half or quarter the output in the given direction.
+
+	*direction* [up|down|left|right|up-left|up-right|down-left|down-right|center]
+		Direction in which to snap the window.
+
+	*combine* [yes|no]
+		Allows to snap a window to an output corner by combining two
+		directions. For example, snapping a window to *right* and then
+		to *up* places it in the *up-right* quarter of the output.
+		Default is no.
 
 	ToggleSnapToEdge additionally toggles the active window between
 	tiled to the given direction and its untiled position.
@@ -278,7 +289,7 @@ Actions are used in menus and keyboard/mouse bindings.
 	Resizes active window size to width and height of the output when the
 	window size exceeds the output size.
 
-*<action name="GoToDesktop" to="value" wrap="yes" />*
+*<action name="GoToDesktop" to="value" wrap="yes" toggle="no" />*
 	Switch to workspace.
 
 	*to* The workspace to switch to. Supported values are "current", "last",
@@ -287,6 +298,9 @@ Actions are used in menus and keyboard/mouse bindings.
 
 	*wrap* [yes|no] Wrap around from last desktop to first, and vice
 	versa. Default yes.
+
+	*toggle* [yes|no] Toggle to “last” if already on the workspace that
+	would be the actual destination. Default no.
 
 *<action name="SendToDesktop" to="value" follow="yes" wrap="yes" />*
 	Send active window to workspace.
@@ -476,7 +490,7 @@ Actions that execute other actions. Used in keyboard/mouse bindings.
 			The "left" , "right", "left-occupied" and
 			"right-occupied" directions will not wrap.
 
-		*tiled* [up|right|down|left|top-left|top-right|down-left|down-right|center|any]
+		*tiled* [up|right|down|left|up-left|up-right|down-left|down-right|center|any]
 			Whether the client is tiled (snapped) along the the
 			indicated screen edge.
 

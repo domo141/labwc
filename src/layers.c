@@ -10,11 +10,11 @@
 #include <assert.h>
 #include <stdbool.h>
 #include <stdlib.h>
-#include <string.h>
 #include <strings.h>
-#include <wayland-server.h>
+#include <wlr/types/wlr_cursor.h>
 #include <wlr/types/wlr_fractional_scale_v1.h>
 #include <wlr/types/wlr_layer_shell_v1.h>
+#include <wlr/types/wlr_scene.h>
 #include <wlr/types/wlr_xdg_shell.h>
 #include <wlr/util/log.h>
 #include "common/macros.h"
@@ -473,7 +473,7 @@ create_popup(struct server *server, struct wlr_xdg_popup *wlr_popup,
 	wlr_popup->base->surface->data = popup->scene_tree;
 
 	node_descriptor_create(&popup->scene_tree->node,
-		LAB_NODE_DESC_LAYER_POPUP, popup);
+		LAB_NODE_LAYER_POPUP, /*view*/ NULL, popup);
 
 	popup->destroy.notify = handle_popup_destroy;
 	wl_signal_add(&wlr_popup->events.destroy, &popup->destroy);
@@ -624,7 +624,7 @@ handle_new_layer_surface(struct wl_listener *listener, void *data)
 	layer_surface->surface->data = surface->scene_layer_surface->tree;
 
 	node_descriptor_create(&surface->scene_layer_surface->tree->node,
-		LAB_NODE_DESC_LAYER_SURFACE, surface);
+		LAB_NODE_LAYER_SURFACE, /*view*/ NULL, surface);
 
 	surface->server = server;
 	surface->scene_layer_surface->layer_surface = layer_surface;

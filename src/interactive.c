@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #include <assert.h>
+#include <wlr/types/wlr_cursor.h>
+#include "config/rcxml.h"
 #include "edges.h"
 #include "input/keyboard.h"
 #include "labwc.h"
 #include "output.h"
 #include "regions.h"
 #include "resize-indicator.h"
-#include "snap.h"
 #include "view.h"
 #include "window-rules.h"
 
@@ -41,7 +42,7 @@ interactive_anchor_to_cursor(struct server *server, struct wlr_box *geo)
 	if (wlr_box_empty(geo)) {
 		return;
 	}
-	/* Resize grab_box while anchoring it to grab_box.{x,y} */
+	/* Resize grab_box while anchoring it to grab_{x,y} */
 	server->grab_box.x = max_move_scale(server->grab_x, server->grab_box.x,
 		server->grab_box.width, geo->width);
 	server->grab_box.y = max_move_scale(server->grab_y, server->grab_box.y,
@@ -54,7 +55,7 @@ interactive_anchor_to_cursor(struct server *server, struct wlr_box *geo)
 }
 
 void
-interactive_begin(struct view *view, enum input_mode mode, uint32_t edges)
+interactive_begin(struct view *view, enum input_mode mode, enum lab_edge edges)
 {
 	/*
 	 * This function sets up an interactive move or resize operation, where
@@ -89,9 +90,9 @@ interactive_begin(struct view *view, enum input_mode mode, uint32_t edges)
 			return;
 		}
 
+		/* Store natural geometry at start of move */
+		view_store_natural_geometry(view);
 		if (view_is_floating(view)) {
-			/* Store natural geometry at start of move */
-			view_store_natural_geometry(view);
 			view_invalidate_last_layout_geometry(view);
 		}
 
@@ -100,7 +101,7 @@ interactive_begin(struct view *view, enum input_mode mode, uint32_t edges)
 
 		cursor_shape = LAB_CURSOR_GRAB;
 		break;
-	case LAB_INPUT_STATE_RESIZE:
+	case LAB_INPUT_STATE_RESIZE: {
 		if (view->shaded || view->fullscreen ||
 				view->maximized == VIEW_AXIS_BOTH) {
 			/*
@@ -118,13 +119,21 @@ interactive_begin(struct view *view, enum input_mode mode, uint32_t edges)
 
 		/*
 		 * If tiled or maximized in only one direction, reset
-		 * maximized/tiled state but keep the same geometry as
-		 * the starting point for the resize.
+		 * tiled state and un-maximize the relevant axes, but
+		 * keep the same geometry as the starting point.
 		 */
+		enum view_axis maximized = view->maximized;
+		if (edges & LAB_EDGES_LEFT_RIGHT) {
+			maximized &= ~VIEW_AXIS_HORIZONTAL;
+		}
+		if (edges & LAB_EDGES_TOP_BOTTOM) {
+			maximized &= ~VIEW_AXIS_VERTICAL;
+		}
+		view_set_maximized(view, maximized);
 		view_set_untiled(view);
-		view_restore_to(view, view->pending);
 		cursor_shape = cursor_get_from_edge(edges);
 		break;
+	}
 	default:
 		/* Should not be reached */
 		return;
@@ -152,8 +161,9 @@ interactive_begin(struct view *view, enum input_mode mode, uint32_t edges)
 		interactive_anchor_to_cursor(server, &natural_geo);
 		/* Shaded clients will not process resize events until unshaded */
 		view_set_shade(view, false);
+		view_set_maximized(view, VIEW_AXIS_NONE);
 		view_set_untiled(view);
-		view_restore_to(view, natural_geo);
+		view_move_resize(view, natural_geo);
 	}
 
 	if (rc.resize_indicator) {
@@ -166,17 +176,17 @@ interactive_begin(struct view *view, enum input_mode mode, uint32_t edges)
 
 bool
 edge_from_cursor(struct seat *seat, struct output **dest_output,
-		enum view_edge *edge1, enum view_edge *edge2)
+		enum lab_edge *edge1, enum lab_edge *edge2)
 {
 	*dest_output = NULL;
-	*edge1 = VIEW_EDGE_INVALID;
-	*edge2 = VIEW_EDGE_INVALID;
+	*edge1 = LAB_EDGE_NONE;
+	*edge2 = LAB_EDGE_NONE;
 
 	if (!view_is_floating(seat->server->grabbed_view)) {
 		return false;
 	}
 
-	if (rc.snap_edge_range == 0) {
+	if (rc.snap_edge_range_inner == 0 && rc.snap_edge_range_outer == 0) {
 		return false;
 	}
 
@@ -187,9 +197,31 @@ edge_from_cursor(struct seat *seat, struct output **dest_output,
 	}
 	*dest_output = output;
 
-	/* Translate into output local coordinates */
 	double cursor_x = seat->cursor->x;
 	double cursor_y = seat->cursor->y;
+
+	int top_range = rc.snap_edge_range_outer;
+	int bottom_range = rc.snap_edge_range_outer;
+	int left_range = rc.snap_edge_range_outer;
+	int right_range = rc.snap_edge_range_outer;
+	if (wlr_output_layout_adjacent_output(seat->server->output_layout, WLR_DIRECTION_UP,
+			output->wlr_output, cursor_x, cursor_y)) {
+		top_range = rc.snap_edge_range_inner;
+	}
+	if (wlr_output_layout_adjacent_output(seat->server->output_layout, WLR_DIRECTION_DOWN,
+			output->wlr_output, cursor_x, cursor_y)) {
+		bottom_range = rc.snap_edge_range_inner;
+	}
+	if (wlr_output_layout_adjacent_output(seat->server->output_layout, WLR_DIRECTION_LEFT,
+			output->wlr_output, cursor_x, cursor_y)) {
+		left_range = rc.snap_edge_range_inner;
+	}
+	if (wlr_output_layout_adjacent_output(seat->server->output_layout, WLR_DIRECTION_RIGHT,
+			output->wlr_output, cursor_x, cursor_y)) {
+		right_range = rc.snap_edge_range_inner;
+	}
+
+	/* Translate into output local coordinates */
 	wlr_output_layout_output_coords(seat->server->output_layout,
 		output->wlr_output, &cursor_x, &cursor_y);
 
@@ -200,29 +232,29 @@ edge_from_cursor(struct seat *seat, struct output **dest_output,
 	int left = cursor_x - area->x;
 	int right = area->x + area->width - cursor_x;
 
-	if (top < rc.snap_edge_range) {
-		*edge1 = VIEW_EDGE_UP;
-	} else if (bottom < rc.snap_edge_range) {
-		*edge1 = VIEW_EDGE_DOWN;
-	} else if (left < rc.snap_edge_range) {
-		*edge1 = VIEW_EDGE_LEFT;
-	} else if (right < rc.snap_edge_range) {
-		*edge1 = VIEW_EDGE_RIGHT;
+	if (top < top_range) {
+		*edge1 = LAB_EDGE_TOP;
+	} else if (bottom < bottom_range) {
+		*edge1 = LAB_EDGE_BOTTOM;
+	} else if (left < left_range) {
+		*edge1 = LAB_EDGE_LEFT;
+	} else if (right < right_range) {
+		*edge1 = LAB_EDGE_RIGHT;
 	} else {
 		return false;
 	}
 
-	if (*edge1 == VIEW_EDGE_UP || *edge1 == VIEW_EDGE_DOWN) {
+	if (*edge1 == LAB_EDGE_TOP || *edge1 == LAB_EDGE_BOTTOM) {
 		if (left < rc.snap_edge_corner_range) {
-			*edge2 = VIEW_EDGE_LEFT;
+			*edge2 = LAB_EDGE_LEFT;
 		} else if (right < rc.snap_edge_corner_range) {
-			*edge2 = VIEW_EDGE_RIGHT;
+			*edge2 = LAB_EDGE_RIGHT;
 		}
-	} else if (*edge1  == VIEW_EDGE_LEFT || *edge1 == VIEW_EDGE_RIGHT) {
+	} else if (*edge1  == LAB_EDGE_LEFT || *edge1 == LAB_EDGE_RIGHT) {
 		if (top < rc.snap_edge_corner_range) {
-			*edge2 = VIEW_EDGE_UP;
+			*edge2 = LAB_EDGE_TOP;
 		} else if (bottom < rc.snap_edge_corner_range) {
-			*edge2 = VIEW_EDGE_DOWN;
+			*edge2 = LAB_EDGE_BOTTOM;
 		}
 	}
 
@@ -234,25 +266,24 @@ static bool
 snap_to_edge(struct view *view)
 {
 	struct output *output;
-	enum view_edge edge1, edge2;
+	enum lab_edge edge1, edge2;
 	if (!edge_from_cursor(&view->server->seat, &output, &edge1, &edge2)) {
 		return false;
 	}
-	enum view_edge edge = edge1 | edge2;
+	enum lab_edge edge = edge1 | edge2;
 
 	view_set_output(view, output);
 	/*
 	 * Don't store natural geometry here (it was
 	 * stored already in interactive_begin())
 	 */
-	if (edge == VIEW_EDGE_UP && rc.snap_top_maximize) {
+	if (edge == LAB_EDGE_TOP && rc.snap_top_maximize) {
 		/* <topMaximize> */
 		view_maximize(view, VIEW_AXIS_BOTH,
 			/*store_natural_geometry*/ false);
 	} else {
-		view_snap_to_edge(view, edge,
-			/*across_outputs*/ false,
-			/*store_natural_geometry*/ false);
+		view_snap_to_edge(view, edge, /*across_outputs*/ false,
+			/*combine*/ false, /*store_natural_geometry*/ false);
 	}
 
 	return true;
@@ -302,7 +333,7 @@ interactive_cancel(struct view *view)
 		return;
 	}
 
-	overlay_hide(&view->server->seat);
+	overlay_finish(&view->server->seat);
 
 	resize_indicator_hide(view);
 

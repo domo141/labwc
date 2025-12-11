@@ -4,8 +4,6 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
-#include <wlr/util/log.h>
 #include "common/set.h"
 
 static struct lab_set pressed, bound, pressed_sent;
@@ -85,10 +83,4 @@ int
 key_state_nr_bound_keys(void)
 {
 	return bound.size;
-}
-
-int
-key_state_nr_pressed_keys(void)
-{
-	return pressed.size;
 }

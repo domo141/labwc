@@ -6,11 +6,11 @@
 #include <float.h>
 #include <math.h>
 #include <string.h>
-#include <wlr/types/wlr_scene.h>
+#include <wlr/types/wlr_cursor.h>
 #include <wlr/util/box.h>
-#include <wlr/util/log.h>
 #include "common/list.h"
 #include "common/mem.h"
+#include "config/rcxml.h"
 #include "input/keyboard.h"
 #include "labwc.h"
 #include "output.h"
@@ -165,7 +165,7 @@ regions_destroy(struct seat *seat, struct wl_list *regions)
 	wl_list_for_each_safe(region, region_tmp, regions, link) {
 		wl_list_remove(&region->link);
 		if (seat && seat->overlay.active.region == region) {
-			overlay_hide(seat);
+			overlay_finish(seat);
 		}
 		zfree(region->name);
 		zfree(region);

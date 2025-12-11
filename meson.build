@@ -1,7 +1,7 @@
 project(
   'labwc',
   'c',
-  version: '0.9.0',
+  version: '0.9.2',
   license: 'GPL-2.0-only',
   meson_version: '>=0.59.0',
   default_options: [
@@ -127,11 +127,22 @@ conf_data.set10('HAVE_RSVG', have_rsvg)
 conf_data.set10('HAVE_LIBSFDO', have_libsfdo)
 
 foreach sym : ['LIBINPUT_CONFIG_DRAG_LOCK_ENABLED_STICKY', 'LIBINPUT_CONFIG_3FG_DRAG_ENABLED_3FG']
-	conf_data.set10('HAVE_' + sym, cc.has_header_symbol('libinput.h', sym, dependencies: input))
+  has_sym = input.type_name() != 'internal' \
+              and cc.has_header_symbol('libinput.h', sym, dependencies: input)
+	conf_data.set10('HAVE_' + sym, has_sym)
 endforeach
 
 if get_option('static_analyzer').enabled()
   add_project_arguments(['-fanalyzer'], language: 'c')
+endif
+
+link_args = []
+if get_option('sections').enabled()
+  add_project_arguments(['-ffunction-sections'], language: 'c')
+  link_args += [
+    '-Wl,--gc-sections',
+    '-Wl,--print-gc-sections',
+  ]
 endif
 
 msgfmt = find_program('msgfmt', required: get_option('nls'))
@@ -193,15 +204,12 @@ executable(
   include_directories: [labwc_inc],
   dependencies: labwc_deps,
   install: true,
+  link_args: link_args,
 )
 
 install_data('data/labwc.desktop', install_dir: get_option('datadir') / 'wayland-sessions')
 
 install_data('data/labwc-portals.conf', install_dir: get_option('datadir') / 'xdg-desktop-portal')
-
-# TODO: move this to clients/meson.build after the labnag PR
-clients = files('clients/lab-sensible-terminal')
-install_data(clients, install_dir: get_option('bindir'))
 
 icons = ['labwc-symbolic.svg', 'labwc.svg']
 foreach icon : icons

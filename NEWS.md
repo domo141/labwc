@@ -9,6 +9,8 @@ The format is based on [Keep a Changelog]
 
 | Date       | All Changes   | wlroots version | lines-of-code |
 |------------|---------------|-----------------|---------------|
+| 2025-12-06 | [unreleased]  | 0.19.2          | 28927         |
+| 2025-10-10 | [0.9.2]       | 0.19.1          | 28818         |
 | 2025-08-02 | [0.9.1]       | 0.19.0          | 28605         |
 | 2025-07-11 | [0.9.0]       | 0.19.0          | 28586         |
 | 2025-05-02 | [0.8.4]       | 0.18.2          | 27679         |
@@ -36,6 +38,36 @@ The format is based on [Keep a Changelog]
 | 2021-06-28 | [0.3.0]       | 0.14.0          | 5051          |
 | 2021-04-15 | [0.2.0]       | 0.13.0          | 5011          |
 | 2021-03-05 | [0.1.0]       | 0.12.0          | 4627          |
+
+[unreleased]: NEWS.md#unreleased
+[0.9.2]: NEWS.md#092---2025-10-10
+[0.9.1]: NEWS.md#091---2025-08-02
+[0.9.0]: NEWS.md#090---2025-07-11
+[0.8.4]: NEWS.md#084---2025-05-02
+[0.8.3]: NEWS.md#083---2025-02-21
+[0.8.2]: NEWS.md#082---2024-12-13
+[0.8.1]: NEWS.md#081---2024-10-25
+[0.8.0]: NEWS.md#080---2024-08-16
+[0.7.4]: NEWS.md#074---2024-06-19
+[0.7.3]: NEWS.md#073---2024-06-12
+[0.7.2]: NEWS.md#072---2024-05-10
+[0.7.1]: NEWS.md#071---2024-03-01
+[0.7.0]: NEWS.md#070---2023-12-22
+[0.6.6]: NEWS.md#065---2023-11-25
+[0.6.5]: NEWS.md#064---2023-09-23
+[0.6.4]: NEWS.md#063---2023-07-14
+[0.6.3]: NEWS.md#062---2023-05-08
+[0.6.2]: NEWS.md#061---2023-03-20
+[0.6.1]: NEWS.md#060---2023-01-29
+[0.6.0]: NEWS.md#060---2022-11-17
+[0.5.3]: NEWS.md#053---2022-07-15
+[0.5.2]: NEWS.md#052---2022-05-17
+[0.5.1]: NEWS.md#051---2022-04-08
+[0.5.0]: NEWS.md#050---2022-02-18
+[0.4.0]: NEWS.md#040---2021-12-31
+[0.3.0]: NEWS.md#030---2021-06-28
+[0.2.0]: NEWS.md#020---2021-04-15
+[0.1.0]: NEWS.md#010---2021-03-05
 
 ## Notes on wlroots-0.19
 
@@ -70,13 +102,268 @@ There are some regression warnings worth noting for the switch to wlroots 0.19:
   around a bug on the wlroots side which is expected to be fixed in wlroots
   `0.19.1` [#2887]
 
+With wlroots compiled with libwayland (>= 1.24.0), there is an invisible margin
+preventing pointer focus on some layer-shell surfaces including those created by
+Gtk. In simple words, this is because libwayland now rounds floats a bit
+differently [#3099].  There is a pending fix [wlroots-5159].
+
 [wlroots-4878]: https://gitlab.freedesktop.org/wlroots/wlroots/-/merge_requests/4878
 [wlroots-5098]:https://gitlab.freedesktop.org/wlroots/wlroots/-/merge_requests/5098
+[wlroots-5159]: https://gitlab.freedesktop.org/wlroots/wlroots/-/merge_requests/5159
 [gtk-8792]: https://gitlab.gnome.org/GNOME/gtk/-/merge_requests/8792
 
-## [unreleased]
+## unreleased
 
-## [0.9.1]
+[unreleased-commits]
+
+This release contains a good amount of bug-fixes, code simplification and
+small usability improvements.
+
+With the stability that comes with having tracked `wlroots 0.19` for a decent
+length of time, this feels like the best version of labwc so far.
+
+In terms of new features, it is worth drawing attention to the click support in
+the window-switcher on-screen-display by @tokyo4j [#3186] which has frequently
+been requested by users.
+
+As a general note to users, we discourage the use of empty strings in the
+`rc.xml` configuration file, for example `<theme><name></name></theme>`. There
+are only a few areas left where empty string are ignored (like under
+`<libinput>`) but the intent for future releases is to consistently read empty
+strings as empty strings. As a preparation, this release has added some warnings
+for empty strings that are currently ignored, so that users can take action.
+Also, the example `docs/rc.xml.all` has been updated to remove poor examples in
+this regard.
+
+A big thank you to all involved in this release.
+
+### Added
+
+- Replace `<snapping><range>` with `<snapping><range inner="" outer="">` to
+  provide more granular control when configuring the size of snapping areas
+  (including `<topMaximize>`) on output edges with and without adjacent outputs.
+  @elviosak [#3241]
+- Add `direction` option to `Resize` action supporting the values `up-left`,
+  `up`, `up-right`, `left`, `right`, `down-left`, `down`, `down-right`. This
+  mirrors Fluxbox's `StartResizing [corner]` behavior. @mbroemme [#3239]
+- Allow the use of the `sendEventsMode` configuration option on keyboards in
+  order to disable keyboard input. @cillian64 [#3208]
+
+```xml
+<libinput>
+  <device category="  RPI Wired Keyboard 1">
+    <sendEventsMode>no</sendEventsMode>
+  </device>
+</libinput>
+```
+- Support the following new `<windowSwitcher>` configuration options:
+  -  `<osd thumbnailLabelFormat="%T">` to specify the label text in each item in
+     the thumbnail style window-switcher. @elviosak [#3187]
+  - `<osd output="all|focused|cursor">` to specify which monitor(s) to show
+    the OSD(s) on. @dntxi [#3201] [#3248]
+- Support window-switcher OSD item click to focus window @tokyo4j [#3186]
+- With the window-switcher custom field state specifiers 's' and 'S', show 's'
+  for shaded window @domo141 [#2895]
+- Support `xdg-dialog` protocol to enable better handling of modal dialogs @xi
+  [#3134]
+- labnag: add --keyboard-focus option @tokyo4j [#3120]
+- Allow window switcher to temporarily unshade windows using config option
+  `<windowSwitcher unshade="yes|no"/>` @Amodio @Consolatis [#3124]
+- For the 'classic' style window-switcher, add the following theme options:
+    - `osd.window-switcher.style-classic.item.active.border.color`
+    - `osd.window-switcher.style-classic.item.active.bg.color`
+  @tokyo4j [#3118]
+
+### Fixed
+
+- Flush XCB connection to mitigate race between Raise and input. @jlindgren90
+  [#3249]
+- Fix disappearing XWayland popups with some (less commonly used) clients like
+  Imagemagick's `display` command, `xshogi`, `xedit` and `xfig` caused by
+  too many surface-pings. @jlindgren90 [#3152] [#3246]
+- Center small fullscreen xdg-shell windows and add black background fill. This
+  increases spec compliance and improves the user experience with games like
+  SWAT4, Quake III and Splinter Cell 3. @jlindgren90 [#3233]
+- When followMouse=yes, update focus on cursor entering SSD rather than just the
+  client surface. Fixes a regression in 885919f. @tokyo4j [#3211]
+- Set all foreign-toplevel initial states correctly. This is not believed to fix
+  any particular user-issue, but just feels safer. @jlindgren90 [#3217]
+- Update layer-shell client top layer visiblity on unmap instead of destroy
+  because it is possible for fullscreen xwayland windows to be unmapped without
+  being destroyed, and in this case the top layer visibility needs to be updated
+  to unhide other layer-shell clients like panels. @jlindgren90 [#3199]
+- Window-switcher fixes include:
+  - Consider output transformation for percentage based widths @tokyo4j [#3177]
+  - Classic theme miscalculation for osd width in percentage @tokyo4j [#3175]
+  - Thumbnail theme miscalculation for item geometries @tokyo4j [#3176]
+- Do not consume mousebind scroll events under `<context name="Client">`.
+  @elviosak [#3146] [#3168]
+- Work around client-side rounding issues at right/bottom pixel. This fixes an
+  issue with some clients (notably Qt ones) where cursor coordinates in the
+  rightmost or bottom fixel are incorrectly rounded up putting them outside the
+  surface bounds. The issue has been particularly noticeable with layer-shell
+  clients like lxqt-panel. @jlindgren90 [#3157] [#2379] [#3099]
+  Note: This also avoids a similar server-side rounding issue with some
+  combinations of wlroots and libwayland versions. See:
+  - https://gitlab.freedesktop.org/wayland/wayland/-/issues/555
+  - https://gitlab.freedesktop.org/wlroots/wlroots/-/merge_requests/5159
+- Don't remove newlines when parsing config, menu and XBM because doing so can
+  cause parser error in some unusual situations like the one shown below.
+  @tokyo4j [#3148]
+
+```
+<!--
+ -
+ - Some comments
+ -
+-->
+```
+
+### Changed
+
+- `<snapping><range>` is deprecated. Use `<snapping><range inner="" outer="">`
+  instead. @elviosak [#3241]
+- When cycling through windows (typically with Alt-Tab) there are two minor
+  user-visible changes. For most users these will not be noticeable, but are
+  mentioned here for completeness.
+  - The initially selected window will now be the one that previously had
+    keyboard focus when cycling commenced rather than the second topmost one.
+    @tokyo4j [#3236]
+  - Windows that are spawned whilst cycling can no longer be cycled through. The
+    intent is to fix this in future releases. @tokyo4j [#3236]
+- Refactor window switcher configuration to put attributes `show` and `style`
+  under `<windowSwitcher><osd>` rather than directly under `<windowSwitcher>`.
+  The old configuration syntax will remain supported for at least one release.
+  @dntxi [#3201]
+- Place OSDs at the center of output rather than usable area @tokyo4j [#3179]
+- If XML documents (like rc.xml and menu.xml) have an XML declaration (typically
+  `<?xml version="1.0"?>`), this XML declaration must be the first thing in the
+  document. In previous versions, line breaks (`\n`) were allowed before due to
+  the way the files were parsed, but this is approach caused other issues like
+  [#3145] and is contrary to XML syntax. [#3148] [#3153]
+- With the window-switcher custom field state specifiers 's' and 'S', change the
+  display order from M|m|F to m|s|M|F; and increase the size from three
+  characters wide to four. @domo141 [#2895]
+- Put labnag in overlay layer by default so that the dialog is still visible
+  when a window is using fullscreen mode. @johanmalm [#3158]
+- Call labnag with on-demand keyboard interactivity by default @tokyo4j [#3120]
+- Temporarily unshade windows when switching windows. Restore old behaviour with
+  `<windowSwitcher unshade="no"/>` @Amodio @Consolatis [#3124]
+- In the classic style window-switcher, the default color of the selected window
+  item has been changed to inherit the border color but with 15% opacity
+  @tokyo4j [#3118]
+
+## 0.9.2 - 2025-10-10
+
+[0.9.2-commits]
+
+### Added
+
+- Allow `SnapToEdge` and `ToggleSnapToEdge` to combine two cardinal directions
+  with the config option `combine="yes|no"`. [#3081] @tokyo4j
+- Support `Border` context for mousebinds as an alias for `Top`...`BRCorner` to
+  make configuration easier. @tokyo4j [#3047]
+- Add window-switcher mode with thumbnails. This can be enabled with:
+  `<windowSwitcher style="thumbnail">`. @tokyo4j [#2981]
+- Add `toggle` option to `GoToDesktop` action. This has the effect of going back
+  to the last desktop if already on the target. @RainerKuemmerle [#3024]
+- Add `<theme maximizedDecoration="titlebar|none"/>` to allow hiding titlebar
+  when window is maximized. @CosmicFusion @tokyo4j [#3015]
+- Use client-send-to-menu as 'Workspace' submenu in built-in client-menu
+  @johanmalm [#2995]
+- Allow overwriting submenu icon to increase flexibility and enhance Openbox
+  compatibility. @tokyo4j [#2998]
+- Allow client-{list-combined,send-to}-menu as submenu of static menu @tokyo4j
+  [#2994]
+- Add `labnag` (a dialog client with message and buttons) and associated
+  `<prompt>` option in 'If' actions.  @johanmalm @Consolatis @tokyo4j [#2699]
+- Support config option `<core><promptCommand>` @johanmalm [#3097]
+- Allow snapping to corner edges during interactive move with associated config
+  options `<snapping><cornerRange>`. @tokyo4j [#2885]
+- Support new values "up-left", "up-right", "down-left" and "down-right" with
+  `<action name="(Toggle)SnapToEdge" direction="[value]">` and
+  `<query tiled="[value]">`. @tokyo4j [#2885]
+- XML parsing improvements as listed below. @tokyo4j [#2667] [#2967] [#2971]
+  - Support nested `If` and `ForEach` actions
+  - Parse CDATA as text all nodes
+  - Remove ordering constraint of attributes in `<keybind>`, `<mousebind>` and
+    `<windowRule>`
+  - `If` actions now works for menus
+  - For menus, the `name` argument no longer has to be the first argument of
+    `<action>`; and the `label` argument no longer has to be the first argument
+    of `<item>`
+- Toggle mousebinds with the `ToggleKeybinds` action @tokyo4j [#2942]
+- Add support for direction value 'any' with tiled queries. This allows users
+  to query for any snap directions without using multiple query statements
+  @lynxy [#2883]
+
+### Fixed
+
+- On detecting broken icon theme, fall back on 'hicolor' @Consolatis [#3126]
+- Restore initially-maximized window position after unplug/plug @tokyo4j [#3042]
+- Fix large client-side icon not being loaded when the rendered icon size is
+  larger than icon sizes from the client. @tokyo4j [#3033]
+- Improve debug logging for configuring input devices @jlindgren90 [#3028]
+- Fix false positives when matching desktop entries @datMaffin [#3004]
+- Prevent accidental downcasting of scale in scaled-icon-buffer to avoid blurry
+  icons on non-integer scales and a cairo assert when using a output scale < 1.
+  @Consolatis #2984
+- Fix xdg-shell windows moving between outputs due to configure timeout
+  @jlindgren90 [#2976]
+- Fix segfault with toplevel `<separator>` in `menu.xml` @tokyo4j [#2970]
+- Prevent hi-res mice triggering scroll actions too often @tokyo4j [#2933]
+
+### Changed
+
+- Change default keybind `W-<arrow>` to combine cardinal directions to support
+  resizing of windows to fill a quarter of an output. This only affects users
+  who do not use an `rc.xml` (thereby using default keybinds) or use the
+  `<keyboard><default/>` option. Previous behavior can be restored by setting
+  `combine="no"` as shown below. [#3081] @tokyo4j
+
+```
+<keybind key="W-Left">
+  <action name="SnapToEdge" direction="left" combine="no" />
+</keybind>
+<keybind key="W-Right">
+  <action name="SnapToEdge" direction="right" combine="no" />
+</keybind>
+<keybind key="W-Up">
+  <action name="SnapToEdge" direction="up" combine="no" />
+</keybind>
+<keybind key="W-Down">
+  <action name="SnapToEdge" direction="down" combine="no" />
+</keybind>
+```
+
+- `Focus` and `Raise` on window border press because it is probably what most
+  people expect and it makes the behavior consistent with that of Openbox.
+  @johanmalm [#3039] [#3049]
+- On interactive resize, only un-maximize the axis/axes that are being resized.
+  @jlindgren90 [#3043]
+- Change theme setting `osd.window-switcher.*` to
+  `osd.window-switcher.style-classic.*`. Backward compatibility is preserved.
+  @tokyo4j [#2981]
+- In client-list menu, add brackets around the titles of any minimised windows
+  @davidphilipbarr [#3002]
+- Respect client-initiated window resize of non-maximized axis, for example
+  remember the width of vertically-maximized window resizing itself
+  horizontally. @jlindgren90 [#3020]
+- Remember position of window along non-maximized axis during interactive move.
+  @jlindgren90 [#3020]
+- Restore default libinput device values on reconfigure with empty value, rather
+  than leaving the old configuration. This makes rc.xml more declarative.
+  @tokyo4j [#3011]
+- Change `If` action when used without a focused window to execute the `<else>`
+  branch (previously it was just ignored). The reason for this is to make things
+  more consistent with `<prompt>`. It is not anticipated that this will affect
+  anyone's workflow but is mentioned here for completeness.
+- Make `autoEnableOutputs=no` apply only to drm outputs @jlindgren90 [#2972]
+- Take into account `<core><gap>` for edge and region overlays @tokyo4j [#2965]
+
+## 0.9.1 - 2025-08-02
+
+[0.9.1-commits]
 
 This is an earlier-than-usual release containinig bug fixes only. It has been
 done on a separate branch to avoid the inclusion of refactoring and new
@@ -98,7 +385,9 @@ features.
 - Fix swapped width/height in XWayland client `_NET_WM_ICON` stride calculation
   [#2909] @jlindgren90
 
-## [0.9.0]
+## 0.9.0 - 2025-07-11
+
+[0.9.0-commits]
 
 The main focus has been to port labwc to wlroots 0.19 [#2388] and fix associated
 issues. Special thanks to @Consolatis @jlindgren90 for this.
@@ -219,7 +508,9 @@ window.*.title.bg.colorTo.splitTo:
 </libinput>
 ```
 
-## [0.8.4]
+## 0.8.4 - 2025-05-02
+
+[0.8.4-commits]
 
 This release predominantly consists of bug-fixes, code simplification and
 usability improvements. Amongst the new features the most noteworthy is the
@@ -283,7 +574,9 @@ release.
 - Increase default `<snapping><range>` to 10 to make it easier to snap windows
   on the edge between two monitors. @johanmalm [#2602] [#2608]
 
-## [0.8.3]
+## 0.8.3 - 2025-02-21
+
+[0.8.3-commits]
 
 The eye-catching new features of this release are undoubtedly:
 1. Support for the `ext-workspace` protocol with big thanks to @Consolatis
@@ -401,7 +694,9 @@ Notes to package maintainers:
   and followMouseRequiresMovement="no" in rc.xml, keyboard-focus semantics
   have subtly changed when using the window-switcher. [#2455]
 
-## [0.8.2]
+## 0.8.2 - 2024-12-13
+
+[0.8.2-commits]
 
 This is a shorter release cycle compared with the usual 10-week one because it
 contains a significant number of stability and cleanliness fixes which warrant
@@ -540,7 +835,9 @@ menu.border.color: #aaaaaa
   Openbox's behavior and (ii) behave as already described in our own
   documentation. [#2380]
 
-## [0.8.1]
+## 0.8.1 - 2024-10-25
+
+[0.8.1-commits]
 
 The most noteworthy additions in this release are:
 
@@ -688,7 +985,9 @@ window.inactive.button.shade.unpressed.image.color
   per-device configuration of scroll factor (e.g. setting different scroll
   factors for mice and touchpads). [#2057]
 
-## [0.8.0]
+## 0.8.0 - 2024-08-16
+
+[0.8.0-commits]
 
 The main focus in this release has been to port labwc to wlroots 0.18 and to
 grind out associated regressions. Nonetheless, it contains a few non-related
@@ -769,7 +1068,9 @@ have been attributed with a 'Written-by' against each relevant log entry.
 
 - Make windows stay fullscreen when associated output is disconnected. [#2040]
 
-## [0.7.4]
+## 0.7.4 - 2024-06-19
+
+[0.7.4-commits]
 
 ### Fixed
 
@@ -777,7 +1078,9 @@ have been attributed with a 'Written-by' against each relevant log entry.
 - Fix magnifier by disabling direct scanout when active. [#1989]
 - Fix crash triggered by pipemenu without parent `<menu>` element. [#1988]
 
-## [0.7.3]
+## 0.7.3 - 2024-06-12
+
+[0.7.3-commits]
 
 Following a couple of big releases, this one feels like more steady with lots of
 focus on bug fixes and stability. In terms of new features the most noteworthy
@@ -866,7 +1169,9 @@ joint effort by @spl237 and @Consolatis.
 - Action `MoveToCursor` is deprecated in favour of:
   `<action name="AutoPlace" policy="cursor"/>`.
 
-## [0.7.2]
+## 0.7.2 - 2024-05-10
+
+[0.7.2-commits]
 
 This release shaped up to be the second in a row that is larger than usual in
 terms of both fixes and new features. Significant additions include
@@ -1134,7 +1439,9 @@ osd.window-switcher.preview.border.color: #ffffff,#00a2ff,#ffffff
   the DRM backend or by explicit request using environment variable
   `LABWC_UPDATE_ACTIVATION_ENV`.
 
-## [0.7.1]
+## 0.7.1 - 2024-03-01
+
+[0.7.1-commits]
 
 ### Added
 
@@ -1305,7 +1612,9 @@ osd.window-switcher.preview.border.color: #ffffff,#00a2ff,#ffffff
   full `app_id`. Consult the labwc-config(5) manual page for more details.
   [#1309]
 
-## [0.7.0] - 2023-12-22
+## 0.7.0 - 2023-12-22
+
+[0.7.0-commits]
 
 The main effort in this release has gone into porting labwc to wlroots 0.17
 and tidying up regressions. Nonetheless, it contains a significant number of
@@ -1365,7 +1674,9 @@ Should bug fixes be required against `0.6.6` (built with wlroots `0.16`), a
 - Use the GTK3 notebook header color as the default active title color
   (small change from `#dddad6` to `#e1dedb`). Written-by: @dimkr
 
-## [0.6.6] - 2023-11-25
+## 0.6.6 - 2023-11-25
+
+[0.6.6-commits]
 
 We do not normally call out contributions by core devs in the changelog,
 but a special thanks goes to @jlindgren90 in this release for lots of work
@@ -1479,7 +1790,9 @@ relating to surface focus and keyboard issues, amongst others.
   will not appear anymore.
 - Always switch to the workspace containing the view being focused.
 
-## [0.6.5] - 2023-09-23
+## 0.6.5 - 2023-09-23
+
+[0.6.5-commits]
 
 ### Added
 
@@ -1555,7 +1868,9 @@ relating to surface focus and keyboard issues, amongst others.
 - Do not expand environment variables in `Exec` action `<command>`
   argument (but still resolve tilde).
 
-## [0.6.4] - 2023-07-14
+## 0.6.4 - 2023-07-14
+
+[0.6.4-commits]
 
 ### Added
 
@@ -1596,7 +1911,9 @@ relating to surface focus and keyboard issues, amongst others.
 - Make `ToggleKeybinds` applicable only to the window that has keyboard focus
   when the action is executed.
 
-## [0.6.3] - 2023-05-08
+## 0.6.3 - 2023-05-08
+
+[0.6.3-commits]
 
 ### Added
 
@@ -1668,7 +1985,9 @@ relating to surface focus and keyboard issues, amongst others.
 - Default to follow="true" for SendToDesktop action as per Openbox 3.6
   specification.
 
-## [0.6.2] - 2023-03-20
+## 0.6.2 - 2023-03-20
+
+[0.6.2-commits]
 
 This release contains refactoring and simplification relating to
 view-output association and xdg/xwayland configure/map events.
@@ -1730,7 +2049,9 @@ Unless otherwise stated all contributions are by the core-devs
 </core>
 ```
 
-## [0.6.1] - 2023-01-29
+## 0.6.1 - 2023-01-29
+
+[0.6.1-commits]
 
 As usual, this release contains lots of refactoring and bug fixes with
 particular thanks going to @Consolatis, @jlindgren90, @bi4k8, @Flrian and
@@ -1793,7 +2114,9 @@ particular thanks going to @Consolatis, @jlindgren90, @bi4k8, @Flrian and
   VS Code and Discord lagging over time. [#553] Written-by: @Joshua-Ashton
 - Do not switch output on SnapToEdge if view is maximized. Written-by: @Flrian
 
-## [0.6.0] - 2022-11-17
+## 0.6.0 - 2022-11-17
+
+[0.6.0-commits]
 
 This release contains significant refactoring to use the wlroots
 scene-graph API. This touches many areas of the code, particularly
@@ -1960,7 +2283,9 @@ reported, tested and fixed issues. Particular mentions go to @bi4k8,
   exited the compositor by mistake trying to get out of alt-tab cycling
   or similar.
 
-## [0.5.3] - 2022-07-15
+## 0.5.3 - 2022-07-15
+
+[0.5.3-commits]
 
 ### Added
 
@@ -1982,7 +2307,9 @@ reported, tested and fixed issues. Particular mentions go to @bi4k8,
 - Do not segfault on missing drag icon. Written-by: @Consolatis
 - Fix windows erratically sticking to edges during move/resize [#331] [#309]
 
-## [0.5.2] - 2022-05-17
+## 0.5.2 - 2022-05-17
+
+[0.5.2-commits]
 
 This is a minor bugfix release mostly to ease packaging.
 
@@ -1990,7 +2317,9 @@ This is a minor bugfix release mostly to ease packaging.
 
 - Properly use system provided wlroots. Written-by: @eli-schwartz
 
-## [0.5.1] - 2022-04-08
+## 0.5.1 - 2022-04-08
+
+[0.5.1-commits]
 
 ### Added
 
@@ -2017,7 +2346,9 @@ This is a minor bugfix release mostly to ease packaging.
 - Fix qt application crash on touchpad scroll [#225]
   Written-by: @Consolatis
 
-## [0.5.0] - 2022-02-18
+## 0.5.0 - 2022-02-18
+
+[0.5.0-commits]
 
 As usual, this release contains a bunch of fixes and improvements, of
 which the most notable feature-type changes are listed below. A big
@@ -2054,7 +2385,9 @@ This release contains the following two breaking changes:
   updating any local `rc.xml` settings in accordance with
   `docs/rc.xml.all`
 
-## [0.4.0] - 2021-12-31
+## 0.4.0 - 2021-12-31
+
+[0.4.0-commits]
 
 Compile with wlroots 0.15.0
 
@@ -2129,7 +2462,9 @@ feature-type changes are listed below.
 - The config option `<lab><xdg_shell_server_side_deco>` has changed to
   `<core><decoration>` (breaking change)
 
-## [0.3.0] - 2021-06-28
+## 0.3.0 - 2021-06-28
+
+[0.3.0-commits]
 
 Compile with wlroots 0.14.0
 
@@ -2140,7 +2475,9 @@ Compile with wlroots 0.14.0
 - Do not use Clearlooks-3.4 theme by default, just use built-in theme
 - Fix bug which triggered Qt application segfault
 
-## [0.2.0] - 2021-04-15
+## 0.2.0 - 2021-04-15
+
+[0.2.0-commits]
 
 Compile with wlroots 0.13.0
 
@@ -2153,7 +2490,9 @@ Compile with wlroots 0.13.0
 - Add labwc-environment(5)
 - Call `wlr_output_enable_adaptive_sync()` if `LABWC_ADAPTIVE_SYNC` set
 
-## [0.1.0] - 2021-03-05
+## 0.1.0 - 2021-03-05
+
+[0.1.0-commits]
 
 Compile with wlroots 0.12.0 and wayland-server >=1.16
 
@@ -2172,34 +2511,35 @@ Compile with wlroots 0.12.0 and wayland-server >=1.16
   ShowMenu
 
 [Keep a Changelog]: https://keepachangelog.com/en/1.0.0/
-[unreleased]: https://github.com/labwc/labwc/compare/0.9.0...HEAD
-[0.9.1]: https://github.com/labwc/labwc/compare/0.9.0...0.9.1
-[0.9.0]: https://github.com/labwc/labwc/compare/0.8.4...0.9.0
-[0.8.4]: https://github.com/labwc/labwc/compare/0.8.3...0.8.4
-[0.8.3]: https://github.com/labwc/labwc/compare/0.8.2...0.8.3
-[0.8.2]: https://github.com/labwc/labwc/compare/0.8.1...0.8.2
-[0.8.1]: https://github.com/labwc/labwc/compare/0.8.0...0.8.1
-[0.8.0]: https://github.com/labwc/labwc/compare/0.7.3...0.8.0
-[0.7.4]: https://github.com/labwc/labwc/compare/0.7.3...0.7.4
-[0.7.3]: https://github.com/labwc/labwc/compare/0.7.2...0.7.3
-[0.7.2]: https://github.com/labwc/labwc/compare/0.7.1...0.7.2
-[0.7.1]: https://github.com/labwc/labwc/compare/0.7.0...0.7.1
-[0.7.0]: https://github.com/labwc/labwc/compare/0.6.6...0.7.0
-[0.6.6]: https://github.com/labwc/labwc/compare/0.6.5...0.6.6
-[0.6.5]: https://github.com/labwc/labwc/compare/0.6.4...0.6.5
-[0.6.4]: https://github.com/labwc/labwc/compare/0.6.3...0.6.4
-[0.6.3]: https://github.com/labwc/labwc/compare/0.6.2...0.6.3
-[0.6.2]: https://github.com/labwc/labwc/compare/0.6.1...0.6.2
-[0.6.1]: https://github.com/labwc/labwc/compare/0.6.0...0.6.1
-[0.6.0]: https://github.com/labwc/labwc/compare/0.5.0...0.6.0
-[0.5.3]: https://github.com/labwc/labwc/compare/0.5.2...0.5.3
-[0.5.2]: https://github.com/labwc/labwc/compare/0.5.1...0.5.2
-[0.5.1]: https://github.com/labwc/labwc/compare/0.5.0...0.5.1
-[0.5.0]: https://github.com/labwc/labwc/compare/0.4.0...0.5.0
-[0.4.0]: https://github.com/labwc/labwc/compare/0.3.0...0.4.0
-[0.3.0]: https://github.com/labwc/labwc/compare/0.2.0...0.3.0
-[0.2.0]: https://github.com/labwc/labwc/compare/0.1.0...0.2.0
-[0.1.0]: https://github.com/labwc/labwc/compare/081339e...0.1.0
+[unreleased-commits]: https://github.com/labwc/labwc/compare/0.9.2...HEAD
+[0.9.2-commits]: https://github.com/labwc/labwc/compare/0.9.1...0.9.2
+[0.9.1-commits]: https://github.com/labwc/labwc/compare/0.9.0...0.9.1
+[0.9.0-commits]: https://github.com/labwc/labwc/compare/0.8.4...0.9.0
+[0.8.4-commits]: https://github.com/labwc/labwc/compare/0.8.3...0.8.4
+[0.8.3-commits]: https://github.com/labwc/labwc/compare/0.8.2...0.8.3
+[0.8.2-commits]: https://github.com/labwc/labwc/compare/0.8.1...0.8.2
+[0.8.1-commits]: https://github.com/labwc/labwc/compare/0.8.0...0.8.1
+[0.8.0-commits]: https://github.com/labwc/labwc/compare/0.7.3...0.8.0
+[0.7.4-commits]: https://github.com/labwc/labwc/compare/0.7.3...0.7.4
+[0.7.3-commits]: https://github.com/labwc/labwc/compare/0.7.2...0.7.3
+[0.7.2-commits]: https://github.com/labwc/labwc/compare/0.7.1...0.7.2
+[0.7.1-commits]: https://github.com/labwc/labwc/compare/0.7.0...0.7.1
+[0.7.0-commits]: https://github.com/labwc/labwc/compare/0.6.6...0.7.0
+[0.6.6-commits]: https://github.com/labwc/labwc/compare/0.6.5...0.6.6
+[0.6.5-commits]: https://github.com/labwc/labwc/compare/0.6.4...0.6.5
+[0.6.4-commits]: https://github.com/labwc/labwc/compare/0.6.3...0.6.4
+[0.6.3-commits]: https://github.com/labwc/labwc/compare/0.6.2...0.6.3
+[0.6.2-commits]: https://github.com/labwc/labwc/compare/0.6.1...0.6.2
+[0.6.1-commits]: https://github.com/labwc/labwc/compare/0.6.0...0.6.1
+[0.6.0-commits]: https://github.com/labwc/labwc/compare/0.5.0...0.6.0
+[0.5.3-commits]: https://github.com/labwc/labwc/compare/0.5.2...0.5.3
+[0.5.2-commits]: https://github.com/labwc/labwc/compare/0.5.1...0.5.2
+[0.5.1-commits]: https://github.com/labwc/labwc/compare/0.5.0...0.5.1
+[0.5.0-commits]: https://github.com/labwc/labwc/compare/0.4.0...0.5.0
+[0.4.0-commits]: https://github.com/labwc/labwc/compare/0.3.0...0.4.0
+[0.3.0-commits]: https://github.com/labwc/labwc/compare/0.2.0...0.3.0
+[0.2.0-commits]: https://github.com/labwc/labwc/compare/0.1.0...0.2.0
+[0.1.0-commits]: https://github.com/labwc/labwc/compare/081339e...0.1.0
 
 [#162]: https://github.com/labwc/labwc/pull/162
 [#163]: https://github.com/labwc/labwc/pull/163
@@ -2484,6 +2824,7 @@ Compile with wlroots 0.12.0 and wayland-server >=1.16
 [#2371]: https://github.com/labwc/labwc/pull/2371
 [#2376]: https://github.com/labwc/labwc/pull/2376
 [#2377]: https://github.com/labwc/labwc/pull/2377
+[#2379]: https://github.com/labwc/labwc/pull/2379
 [#2380]: https://github.com/labwc/labwc/pull/2380
 [#2388]: https://github.com/labwc/labwc/pull/2388
 [#2398]: https://github.com/labwc/labwc/pull/2398
@@ -2546,12 +2887,14 @@ Compile with wlroots 0.12.0 and wayland-server >=1.16
 [#2652]: https://github.com/labwc/labwc/pull/2652
 [#2653]: https://github.com/labwc/labwc/pull/2653
 [#2657]: https://github.com/labwc/labwc/pull/2657
+[#2667]: https://github.com/labwc/labwc/pull/2667
 [#2669]: https://github.com/labwc/labwc/pull/2669
 [#2678]: https://github.com/labwc/labwc/pull/2678
 [#2686]: https://github.com/labwc/labwc/pull/2686
 [#2688]: https://github.com/labwc/labwc/pull/2688
 [#2692]: https://github.com/labwc/labwc/pull/2692
 [#2693]: https://github.com/labwc/labwc/pull/2693
+[#2699]: https://github.com/labwc/labwc/pull/2699
 [#2700]: https://github.com/labwc/labwc/pull/2700
 [#2710]: https://github.com/labwc/labwc/pull/2710
 [#2713]: https://github.com/labwc/labwc/pull/2713
@@ -2595,14 +2938,76 @@ Compile with wlroots 0.12.0 and wayland-server >=1.16
 [#2873]: https://github.com/labwc/labwc/pull/2873
 [#2874]: https://github.com/labwc/labwc/pull/2874
 [#2877]: https://github.com/labwc/labwc/pull/2877
+[#2883]: https://github.com/labwc/labwc/pull/2883
+[#2885]: https://github.com/labwc/labwc/pull/2885
 [#2886]: https://github.com/labwc/labwc/pull/2886
 [#2887]: https://github.com/labwc/labwc/pull/2887
 [#2891]: https://github.com/labwc/labwc/pull/2891
+[#2895]: https://github.com/labwc/labwc/pull/2895
 [#2909]: https://github.com/labwc/labwc/pull/2909
 [#2910]: https://github.com/labwc/labwc/pull/2910
 [#2914]: https://github.com/labwc/labwc/pull/2914
+[#2933]: https://github.com/labwc/labwc/pull/2933
 [#2937]: https://github.com/labwc/labwc/pull/2937
 [#2939]: https://github.com/labwc/labwc/pull/2939
+[#2942]: https://github.com/labwc/labwc/pull/2942
 [#2943]: https://github.com/labwc/labwc/pull/2943
 [#2944]: https://github.com/labwc/labwc/pull/2944
 [#2948]: https://github.com/labwc/labwc/pull/2948
+[#2965]: https://github.com/labwc/labwc/pull/2965
+[#2967]: https://github.com/labwc/labwc/pull/2967
+[#2970]: https://github.com/labwc/labwc/pull/2970
+[#2971]: https://github.com/labwc/labwc/pull/2971
+[#2972]: https://github.com/labwc/labwc/pull/2972
+[#2976]: https://github.com/labwc/labwc/pull/2976
+[#2981]: https://github.com/labwc/labwc/pull/2981
+[#2994]: https://github.com/labwc/labwc/pull/2994
+[#2995]: https://github.com/labwc/labwc/pull/2995
+[#2998]: https://github.com/labwc/labwc/pull/2998
+[#3002]: https://github.com/labwc/labwc/pull/3002
+[#3004]: https://github.com/labwc/labwc/pull/3004
+[#3011]: https://github.com/labwc/labwc/pull/3011
+[#3015]: https://github.com/labwc/labwc/pull/3015
+[#3020]: https://github.com/labwc/labwc/pull/3020
+[#3024]: https://github.com/labwc/labwc/pull/3024
+[#3028]: https://github.com/labwc/labwc/pull/3028
+[#3033]: https://github.com/labwc/labwc/pull/3033
+[#3039]: https://github.com/labwc/labwc/pull/3039
+[#3042]: https://github.com/labwc/labwc/pull/3042
+[#3043]: https://github.com/labwc/labwc/pull/3043
+[#3047]: https://github.com/labwc/labwc/pull/3047
+[#3049]: https://github.com/labwc/labwc/pull/3049
+[#3081]: https://github.com/labwc/labwc/pull/3081
+[#3097]: https://github.com/labwc/labwc/pull/3097
+[#3099]: https://github.com/labwc/labwc/pull/3099
+[#3118]: https://github.com/labwc/labwc/pull/3118
+[#3120]: https://github.com/labwc/labwc/pull/3120
+[#3124]: https://github.com/labwc/labwc/pull/3124
+[#3126]: https://github.com/labwc/labwc/pull/3126
+[#3134]: https://github.com/labwc/labwc/pull/3134
+[#3145]: https://github.com/labwc/labwc/pull/3145
+[#3146]: https://github.com/labwc/labwc/pull/3146
+[#3148]: https://github.com/labwc/labwc/pull/3148
+[#3152]: https://github.com/labwc/labwc/pull/3152
+[#3153]: https://github.com/labwc/labwc/pull/3153
+[#3157]: https://github.com/labwc/labwc/pull/3157
+[#3158]: https://github.com/labwc/labwc/pull/3158
+[#3168]: https://github.com/labwc/labwc/pull/3168
+[#3175]: https://github.com/labwc/labwc/pull/3175
+[#3176]: https://github.com/labwc/labwc/pull/3176
+[#3177]: https://github.com/labwc/labwc/pull/3177
+[#3179]: https://github.com/labwc/labwc/pull/3179
+[#3186]: https://github.com/labwc/labwc/pull/3186
+[#3187]: https://github.com/labwc/labwc/pull/3187
+[#3199]: https://github.com/labwc/labwc/pull/3199
+[#3201]: https://github.com/labwc/labwc/pull/3201
+[#3208]: https://github.com/labwc/labwc/pull/3208
+[#3211]: https://github.com/labwc/labwc/pull/3211
+[#3217]: https://github.com/labwc/labwc/pull/3217
+[#3233]: https://github.com/labwc/labwc/pull/3233
+[#3236]: https://github.com/labwc/labwc/pull/3236
+[#3239]: https://github.com/labwc/labwc/pull/3239
+[#3241]: https://github.com/labwc/labwc/pull/3241
+[#3246]: https://github.com/labwc/labwc/pull/3246
+[#3248]: https://github.com/labwc/labwc/pull/3248
+[#3249]: https://github.com/labwc/labwc/pull/3249

@@ -3,12 +3,16 @@
 #include <wlr/types/wlr_scene.h>
 #include <wlr/util/box.h>
 #include <wlr/util/log.h>
-#include "common/macros.h"
-#include "common/scaled-font-buffer.h"
+#include "config/rcxml.h"
 #include "labwc.h"
 #include "resize-indicator.h"
 #include "resize-outlines.h"
+#include "scaled-buffer/scaled-font-buffer.h"
+#include "ssd.h"
+#include "theme.h"
 #include "view.h"
+
+#define PADDING rc.theme->osd_window_switcher_classic.padding
 
 static void
 resize_indicator_reconfigure_view(struct resize_indicator *indicator)
@@ -17,7 +21,7 @@ resize_indicator_reconfigure_view(struct resize_indicator *indicator)
 
 	struct theme *theme = rc.theme;
 	indicator->height = font_height(&rc.font_osd)
-		+ 2 * theme->osd_window_switcher_padding
+		+ 2 * PADDING
 		+ 2 * theme->osd_border_width;
 
 	/* Static positions */
@@ -25,8 +29,8 @@ resize_indicator_reconfigure_view(struct resize_indicator *indicator)
 		theme->osd_border_width, theme->osd_border_width);
 
 	wlr_scene_node_set_position(&indicator->text->scene_buffer->node,
-		theme->osd_border_width + theme->osd_window_switcher_padding,
-		theme->osd_border_width + theme->osd_window_switcher_padding);
+		theme->osd_border_width + PADDING,
+		theme->osd_border_width + PADDING);
 
 	/* Colors */
 	wlr_scene_rect_set_color(indicator->border, theme->osd_border_color);
@@ -105,7 +109,7 @@ resize_indicator_set_size(struct resize_indicator *indicator, int width)
 
 	/* We are not using a width-cache-early-out here to allow for theme changes */
 	indicator->width = width
-		+ 2 * rc.theme->osd_window_switcher_padding
+		+ 2 * PADDING
 		+ 2 * rc.theme->osd_border_width;
 
 	wlr_scene_rect_set_size(indicator->border, indicator->width, indicator->height);
@@ -188,9 +192,6 @@ resize_indicator_update(struct view *view)
 
 	/* Let the indicator change width as required by the content */
 	int width = font_width(&rc.font_osd, text);
-
-	/* font_extents() adds 4 pixels to the calculated width */
-	width -= 4;
 
 	resize_indicator_set_size(indicator, width);
 

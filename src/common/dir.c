@@ -7,15 +7,13 @@
 #include "common/dir.h"
 #include <assert.h>
 #include <glib.h>
-#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <sys/stat.h>
 #include "common/buf.h"
 #include "common/list.h"
 #include "common/mem.h"
 #include "common/string-helpers.h"
-#include "labwc.h"
+#include "config/rcxml.h"
 
 struct dir {
 	const char *prefix;

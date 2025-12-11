@@ -35,12 +35,20 @@ static struct key_combos {
 			.name = "direction",
 			.value = "left",
 		},
+		.attributes[1] = {
+			.name = "combine",
+			.value = "yes",
+		},
 	}, {
 		.binding = "W-Right",
 		.action = "SnapToEdge",
 		.attributes[0] = {
 			.name = "direction",
 			.value = "right",
+		},
+		.attributes[1] = {
+			.name = "combine",
+			.value = "yes",
 		},
 	}, {
 		.binding = "W-Up",
@@ -49,12 +57,20 @@ static struct key_combos {
 			.name = "direction",
 			.value = "up",
 		},
+		.attributes[1] = {
+			.name = "combine",
+			.value = "yes",
+		},
 	}, {
 		.binding = "W-Down",
 		.action = "SnapToEdge",
 		.attributes[0] = {
 			.name = "direction",
 			.value = "down",
+		},
+		.attributes[1] = {
+			.name = "combine",
+			.value = "yes",
 		},
 	}, {
 		.binding = "A-Space",
@@ -143,42 +159,17 @@ static struct mouse_combos {
 		const char *name, *value;
 	} attributes[2];
 } mouse_combos[] = { {
-		.context = "Left",
+		.context = "Border",
 		.button = "Left",
-		.event = "Drag",
-		.action = "Resize",
+		.event = "Press",
+		.action = "Focus",
 	}, {
-		.context = "Top",
+		.context = "Border",
 		.button = "Left",
-		.event = "Drag",
-		.action = "Resize",
+		.event = "Press",
+		.action = "Raise",
 	}, {
-		.context = "Bottom",
-		.button = "Left",
-		.event = "Drag",
-		.action = "Resize",
-	}, {
-		.context = "Right",
-		.button = "Left",
-		.event = "Drag",
-		.action = "Resize",
-	}, {
-		.context = "TLCorner",
-		.button = "Left",
-		.event = "Drag",
-		.action = "Resize",
-	}, {
-		.context = "TRCorner",
-		.button = "Left",
-		.event = "Drag",
-		.action = "Resize",
-	}, {
-		.context = "BRCorner",
-		.button = "Left",
-		.event = "Drag",
-		.action = "Resize",
-	}, {
-		.context = "BLCorner",
+		.context = "Border",
 		.button = "Left",
 		.event = "Drag",
 		.action = "Resize",

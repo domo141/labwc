@@ -2,13 +2,14 @@
 #include <assert.h>
 #include <ctype.h>
 #include <wlr/util/log.h>
+#include "common/buf.h"
 #include "common/mem.h"
 #include "config/rcxml.h"
+#include "cycle.h"
 #include "view.h"
 #include "workspaces.h"
 #include "labwc.h"
 #include "desktop-entry.h"
-#include "osd.h"
 #include "output.h"
 
 /* includes '%', terminating 's' and NULL byte, 8 is enough for %-9999s */
@@ -25,17 +26,13 @@ struct field_converter {
 /* Internal helpers */
 
 static const char *
-get_app_id_or_class(struct view *view, bool trim)
+get_identifier(struct view *view, bool trim)
 {
-	/*
-	 * XWayland clients return WM_CLASS for 'app_id' so we don't need a
-	 * special case for that here.
-	 */
-	const char *identifier = view_get_string_prop(view, "app_id");
+	const char *identifier = view->app_id;
 
 	/* remove the first two nodes of 'org.' strings */
 	if (trim && !strncmp(identifier, "org.", 4)) {
-		char *p = (char *)identifier + 4;
+		const char *p = identifier + 4;
 		p = strchr(p, '.');
 		if (p) {
 			return ++p;
@@ -48,14 +45,13 @@ static const char *
 get_desktop_name(struct view *view)
 {
 #if HAVE_LIBSFDO
-	const char *app_id = view_get_string_prop(view, "app_id");
-	const char *name = desktop_entry_name_lookup(view->server, app_id);
+	const char *name = desktop_entry_name_lookup(view->server, view->app_id);
 	if (name) {
 		return name;
 	}
 #endif
 
-	return get_app_id_or_class(view, /* trim */ true);
+	return get_identifier(view, /* trim */ true);
 }
 
 static const char *
@@ -73,20 +69,11 @@ get_type(struct view *view, bool short_form)
 }
 
 static const char *
-get_title(struct view *view)
-{
-	return view_get_string_prop(view, "title");
-}
-
-static const char *
 get_title_if_different(struct view *view)
 {
-	const char *identifier = get_app_id_or_class(view, /*trim*/ false);
-	const char *title = get_title(view);
-	if (!identifier) {
-		return title;
-	}
-	return (!title || !strcmp(identifier, title)) ? NULL : title;
+	const char *identifier = get_identifier(view, /*trim*/ false);
+	const char *title = view->title;
+	return !strcmp(identifier, title) ? NULL : title;
 }
 
 /* Field handlers */
@@ -124,10 +111,12 @@ static void
 field_set_win_state(struct buf *buf, struct view *view, const char *format)
 {
 	/* custom type conversion-specifier: s */
-	if (view->maximized) {
-		buf_add(buf, "M");
-	} else if (view->minimized) {
+	if (view->minimized) {
 		buf_add(buf, "m");
+	} else if (view->shaded) {
+		buf_add(buf, "s");
+	} else if (view->maximized) {
+		buf_add(buf, "M");
 	} else if (view->fullscreen) {
 		buf_add(buf, "F");
 	} else {
@@ -140,6 +129,7 @@ field_set_win_state_all(struct buf *buf, struct view *view, const char *format)
 {
 	/* custom type conversion-specifier: S */
 	buf_add(buf, view->minimized ? "m" : " ");
+	buf_add(buf, view->shaded ? "s" : " ");
 	buf_add(buf, view->maximized ? "M" : " ");
 	buf_add(buf, view->fullscreen ? "F" : " ");
 	/* TODO: add always-on-top and omnipresent ? */
@@ -168,14 +158,14 @@ static void
 field_set_identifier(struct buf *buf, struct view *view, const char *format)
 {
 	/* custom type conversion-specifier: I */
-	buf_add(buf, get_app_id_or_class(view, /*trim*/ false));
+	buf_add(buf, get_identifier(view, /*trim*/ false));
 }
 
 static void
 field_set_identifier_trimmed(struct buf *buf, struct view *view, const char *format)
 {
 	/* custom type conversion-specifier: i */
-	buf_add(buf, get_app_id_or_class(view, /*trim*/ true));
+	buf_add(buf, get_identifier(view, /*trim*/ true));
 }
 
 static void
@@ -189,7 +179,7 @@ static void
 field_set_title(struct buf *buf, struct view *view, const char *format)
 {
 	/* custom type conversion-specifier: T */
-	buf_add(buf, get_title(view));
+	buf_add(buf, view->title);
 }
 
 static void
@@ -198,9 +188,6 @@ field_set_title_short(struct buf *buf, struct view *view, const char *format)
 	/* custom type conversion-specifier: t */
 	buf_add(buf, get_title_if_different(view));
 }
-
-static void field_set_custom(struct buf *buf, struct view *view,
-	const char *format);
 
 static const struct field_converter field_converter[LAB_FIELD_COUNT] = {
 	[LAB_FIELD_TYPE]               = { 'B', field_set_type },
@@ -217,11 +204,11 @@ static const struct field_converter field_converter[LAB_FIELD_COUNT] = {
 	[LAB_FIELD_TITLE]              = { 'T', field_set_title },
 	[LAB_FIELD_TITLE_SHORT]        = { 't', field_set_title_short },
 	/* fmt_char can never be matched so prevents LAB_FIELD_CUSTOM recursion */
-	[LAB_FIELD_CUSTOM]             = { '\0', field_set_custom },
+	[LAB_FIELD_CUSTOM]             = { '\0', cycle_osd_field_set_custom },
 };
 
-static void
-field_set_custom(struct buf *buf, struct view *view, const char *format)
+void
+cycle_osd_field_set_custom(struct buf *buf, struct view *view, const char *format)
 {
 	if (!format) {
 		wlr_log(WLR_ERROR, "Missing format for custom window switcher field");
@@ -299,7 +286,7 @@ reset_format:
 }
 
 void
-osd_field_arg_from_xml_node(struct window_switcher_field *field,
+cycle_osd_field_arg_from_xml_node(struct cycle_osd_field *field,
 		const char *nodename, const char *content)
 {
 	if (!strcmp(nodename, "content")) {
@@ -345,7 +332,7 @@ osd_field_arg_from_xml_node(struct window_switcher_field *field,
 }
 
 bool
-osd_field_is_valid(struct window_switcher_field *field)
+cycle_osd_field_is_valid(struct cycle_osd_field *field)
 {
 	if (field->content == LAB_FIELD_NONE) {
 		wlr_log(WLR_ERROR, "Invalid OSD field: no content set");
@@ -363,7 +350,7 @@ osd_field_is_valid(struct window_switcher_field *field)
 }
 
 void
-osd_field_get_content(struct window_switcher_field *field,
+cycle_osd_field_get_content(struct cycle_osd_field *field,
 		struct buf *buf, struct view *view)
 {
 	if (field->content == LAB_FIELD_NONE) {
@@ -376,7 +363,7 @@ osd_field_get_content(struct window_switcher_field *field,
 }
 
 void
-osd_field_free(struct window_switcher_field *field)
+cycle_osd_field_free(struct cycle_osd_field *field)
 {
 	zfree(field->format);
 	zfree(field);

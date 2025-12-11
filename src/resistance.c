@@ -1,9 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #include "resistance.h"
 #include <assert.h>
-#include <limits.h>
 #include "common/border.h"
-#include "common/macros.h"
 #include "config/rcxml.h"
 #include "edges.h"
 #include "labwc.h"
@@ -167,7 +165,7 @@ resistance_resize_apply(struct view *view, struct wlr_box *new_geom)
 	edges_initialize(&next_edges);
 
 	/* Use a constrained, effective geometry for snapping if appropriate */
-	enum wlr_edges resize_edges = view->server->resize_edges;
+	enum lab_edge resize_edges = view->server->resize_edges;
 	struct wlr_box origin =
 		snap_constraints_effective(view, resize_edges, /* use_pending */ false);
 

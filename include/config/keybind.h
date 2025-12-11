@@ -2,7 +2,8 @@
 #ifndef LABWC_KEYBIND_H
 #define LABWC_KEYBIND_H
 
-#include <wlr/types/wlr_keyboard.h>
+#include <stdbool.h>
+#include <wayland-util.h>
 #include <xkbcommon/xkbcommon.h>
 
 #define MAX_KEYSYMS 32
@@ -40,6 +41,9 @@ void keybind_destroy(struct keybind *keybind);
 uint32_t parse_modifier(const char *symname);
 
 bool keybind_the_same(struct keybind *a, struct keybind *b);
+
+bool keybind_contains_keycode(struct keybind *keybind, xkb_keycode_t keycode);
+bool keybind_contains_keysym(struct keybind *keybind, xkb_keysym_t keysym);
 
 void keybind_update_keycodes(struct server *server);
 #endif /* LABWC_KEYBIND_H */

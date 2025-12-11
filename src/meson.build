@@ -11,8 +11,6 @@ labwc_sources = files(
   'magnifier.c',
   'main.c',
   'node.c',
-  'osd.c',
-  'osd-field.c',
   'output.c',
   'output-state.c',
   'output-virtual.c',
@@ -49,12 +47,14 @@ if have_libsfdo
   )
 endif
 
-subdir('img')
 subdir('common')
 subdir('config')
+subdir('cycle')
 subdir('decorations')
 subdir('foreign-toplevel')
+subdir('img')
 subdir('input')
 subdir('menu')
-subdir('ssd')
 subdir('protocols')
+subdir('scaled-buffer')
+subdir('ssd')

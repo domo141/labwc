@@ -23,6 +23,8 @@ struct action {
 
 struct action *action_create(const char *action_name);
 
+const char *action_get_str(struct action *action, const char *key,
+	const char *default_value);
 bool action_is_valid(struct action *action);
 bool action_is_show_menu(struct action *action);
 
@@ -48,6 +50,7 @@ bool actions_contain_toggle_keybinds(struct wl_list *action_list);
 void actions_run(struct view *activator, struct server *server,
 	struct wl_list *actions, struct cursor_context *ctx);
 
+void action_prompts_destroy(void);
 bool action_check_prompt_result(pid_t pid, int exit_code);
 
 void action_free(struct action *action);

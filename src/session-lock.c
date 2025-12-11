@@ -2,6 +2,9 @@
 #define _POSIX_C_SOURCE 200809L
 #include "session-lock.h"
 #include <assert.h>
+#include <wlr/types/wlr_output_layout.h>
+#include <wlr/types/wlr_scene.h>
+#include <wlr/types/wlr_session_lock_v1.h>
 #include "common/mem.h"
 #include "labwc.h"
 #include "node.h"
@@ -135,7 +138,7 @@ handle_new_surface(struct wl_listener *listener, void *data)
 	struct wlr_scene_tree *surface_tree =
 		wlr_scene_subsurface_tree_create(lock_output->tree, lock_surface->surface);
 	node_descriptor_create(&surface_tree->node,
-		LAB_NODE_DESC_SESSION_LOCK_SURFACE, NULL);
+		LAB_NODE_SESSION_LOCK_SURFACE, /*view*/ NULL, /*data*/ NULL);
 
 	lock_output->surface_destroy.notify = handle_surface_destroy;
 	wl_signal_add(&lock_surface->events.destroy, &lock_output->surface_destroy);

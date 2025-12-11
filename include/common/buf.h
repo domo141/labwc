@@ -51,6 +51,17 @@ void buf_expand_shell_variables(struct buf *s);
 void buf_add_fmt(struct buf *s, const char *fmt, ...);
 
 /**
+ * buf_add_hex_color - add rgb color as hex string to C string buffer
+ * @s: buffer
+ * @color: rgb color to be added
+ *
+ * For example:
+ *   - With the input 'red' (defined as red[4] = { 1.0f, 0.0f, 0.0f, 1.0f}) the
+ *     string "#ff0000ff" will be written to the buffer.
+ */
+void buf_add_hex_color(struct buf *s, float color[4]);
+
+/**
  * buf_add - add data to C string buffer
  * @s: buffer
  * @data: data to be added
@@ -60,9 +71,9 @@ void buf_add(struct buf *s, const char *data);
 /**
  * buf_add_char - add single char to C string buffer
  * @s: buffer
- * @data: char to be added
+ * @ch: char to be added
  */
-void buf_add_char(struct buf *s, char data);
+void buf_add_char(struct buf *s, char ch);
 
 /**
  * buf_clear - clear the buffer, internal allocations are preserved
@@ -97,5 +108,12 @@ void buf_reset(struct buf *s);
  * with something like struct buf foo = {0}).
  */
 void buf_move(struct buf *dst, struct buf *src);
+
+/**
+ * buf_from_file - read file into memory buffer
+ * @filename: file to read
+ * Free returned buffer with buf_reset().
+ */
+struct buf buf_from_file(const char *filename);
 
 #endif /* LABWC_BUF_H */

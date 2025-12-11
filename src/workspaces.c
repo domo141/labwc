@@ -8,17 +8,20 @@
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
+#include <wlr/types/wlr_output_layout.h>
 #include <wlr/types/wlr_scene.h>
 #include "buffer.h"
 #include "common/font.h"
 #include "common/graphic-helpers.h"
 #include "common/list.h"
 #include "common/mem.h"
+#include "config/rcxml.h"
 #include "input/keyboard.h"
 #include "labwc.h"
 #include "output.h"
 #include "protocols/cosmic-workspaces.h"
 #include "protocols/ext-workspace.h"
+#include "theme.h"
 #include "view.h"
 
 #define COSMIC_WORKSPACES_VERSION 1
@@ -167,12 +170,8 @@ _osd_update(struct server *server)
 		struct wlr_box output_box;
 		wlr_output_layout_get_box(output->server->output_layout,
 			output->wlr_output, &output_box);
-		int lx = output->usable_area.x
-			+ (output->usable_area.width - width) / 2
-			+ output_box.x;
-		int ly = output->usable_area.y
-			+ (output->usable_area.height - height) / 2
-			+ output_box.y;
+		int lx = output_box.x + (output_box.width - width) / 2;
+		int ly = output_box.y + (output_box.height - height) / 2;
 		wlr_scene_node_set_position(&output->workspace_osd->node, lx, ly);
 		wlr_scene_buffer_set_buffer(output->workspace_osd, &buffer->base);
 		wlr_scene_buffer_set_dest_size(output->workspace_osd,
@@ -600,7 +599,7 @@ workspaces_reconfigure(struct server *server)
 	}
 
 	/* # of configured workspaces decreased */
-	overlay_hide(&server->seat);
+	overlay_finish(&server->seat);
 	struct workspace *first_workspace =
 		wl_container_of(server->workspaces.all.next, first_workspace, link);
 

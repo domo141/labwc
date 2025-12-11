@@ -9,8 +9,8 @@
 #define LABWC_THEME_H
 
 #include <cairo.h>
-#include <wlr/render/wlr_renderer.h>
-#include "ssd.h"
+#include <stdbool.h>
+#include "common/node-type.h"
 
 struct lab_img;
 
@@ -41,11 +41,11 @@ struct theme_snapping_overlay {
 enum lab_button_state {
 	LAB_BS_DEFAULT = 0,
 
-	LAB_BS_HOVERD = 1 << 0,
+	LAB_BS_HOVERED = 1 << 0,
 	LAB_BS_TOGGLED = 1 << 1,
 	LAB_BS_ROUNDED = 1 << 2,
 
-	LAB_BS_ALL = LAB_BS_HOVERD | LAB_BS_TOGGLED | LAB_BS_ROUNDED,
+	LAB_BS_ALL = LAB_BS_HOVERED | LAB_BS_TOGGLED | LAB_BS_ROUNDED,
 };
 
 struct theme_background {
@@ -83,14 +83,14 @@ struct theme {
 
 	/*
 	 * Themes/textures for each active/inactive window. Indexed by
-	 * THEME_INACTIVE and THEME_ACTIVE.
+	 * ssd_active_state.
 	 */
 	struct {
 		/* title background pattern (solid or gradient) */
 		struct theme_background title_bg;
 
 		/* TODO: add toggled/hover/pressed/disabled colors for buttons */
-		float button_colors[LAB_SSD_BUTTON_LAST + 1][4];
+		float button_colors[LAB_NODE_BUTTON_LAST + 1][4];
 
 		float border_color[4];
 		float toggled_keybinds_color[4];
@@ -104,12 +104,12 @@ struct theme {
 		 * The texture of a window buttons for each hover/toggled/rounded
 		 * state. This can be accessed like:
 		 *
-		 * buttons[LAB_SSD_BUTTON_ICONIFY][LAB_BS_HOVERD | LAB_BS_TOGGLED]
+		 * buttons[LAB_NODE_BUTTON_ICONIFY][LAB_BS_HOVERED | LAB_BS_TOGGLED]
 		 *
-		 * Elements in buttons[0] are all NULL since LAB_SSD_BUTTON_FIRST is 1.
+		 * Elements in buttons[0] are all NULL since LAB_NODE_BUTTON_FIRST is 1.
 		 */
 		struct lab_img *button_imgs
-			[LAB_SSD_BUTTON_LAST + 1][LAB_BS_ALL + 1];
+			[LAB_NODE_BUTTON_LAST + 1][LAB_BS_ALL + 1];
 
 		/*
 		 * The titlebar background is specified as a cairo_pattern
@@ -164,13 +164,39 @@ struct theme {
 	float osd_border_color[4];
 	float osd_label_text_color[4];
 
-	int osd_window_switcher_width;
-	int osd_window_switcher_padding;
-	int osd_window_switcher_item_padding_x;
-	int osd_window_switcher_item_padding_y;
-	int osd_window_switcher_item_active_border_width;
-	int osd_window_switcher_item_icon_size;
-	bool osd_window_switcher_width_is_percent;
+	struct window_switcher_classic_theme {
+		int width;
+		int padding;
+		int item_padding_x;
+		int item_padding_y;
+		int item_active_border_width;
+		float item_active_border_color[4];
+		float item_active_bg_color[4];
+		int item_icon_size;
+		bool width_is_percent;
+
+		/*
+		 * Not set in rc.xml/themerc, but derived from the tallest
+		 * titlebar object plus 2 * window_titlebar_padding_height
+		 */
+		int item_height;
+	} osd_window_switcher_classic;
+
+	struct window_switcher_thumbnail_theme {
+		int max_width;
+		int padding;
+		int item_width;
+		int item_height;
+		int item_padding;
+		int item_active_border_width;
+		float item_active_border_color[4];
+		float item_active_bg_color[4];
+		int item_icon_size;
+		bool max_width_is_percent;
+
+		int title_height;
+	} osd_window_switcher_thumbnail;
+
 	int osd_window_switcher_preview_border_width;
 	float osd_window_switcher_preview_border_color[3][4];
 
@@ -181,19 +207,10 @@ struct theme {
 	struct theme_snapping_overlay
 		snapping_overlay_region, snapping_overlay_edge;
 
-	/*
-	 * Not set in rc.xml/themerc, but derived from the tallest titlebar
-	 * object plus 2 * window_titlebar_padding_height
-	 */
-	int osd_window_switcher_item_height;
-
 	/* magnifier */
 	float mag_border_color[4];
 	int mag_border_width;
 };
-
-#define THEME_INACTIVE 0
-#define THEME_ACTIVE 1
 
 struct server;
 

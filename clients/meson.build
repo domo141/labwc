@@ -49,8 +49,11 @@ executable(
     wlroots,
     server_protos,
     epoll_dep,
+    xkbcommon,
   ],
   include_directories: [labwc_inc],
-	install: true
+  install: true,
 )
 
+clients = files('lab-sensible-terminal')
+install_data(clients, install_dir: get_option('bindir'))

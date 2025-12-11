@@ -48,7 +48,7 @@ create_attribute_tree(const xmlAttr *attr)
 }
 
 /*
- * Consider <keybind name.action="ShowMenu" x.position.action="1" y.position="2" />.
+ * Consider <keybind name.action="ShowMenu" x.position.action="1" y.position.action="2" />.
  * These three attributes are represented by following trees.
  *    action(dst)---name
  *    action(src)---position---x
@@ -79,7 +79,8 @@ merge_two_trees(xmlNode *dst, xmlNode *src)
 			&& !strcasecmp((char *)dst->name, (char *)src->name)) {
 		xmlNode *next_dst = dst->last;
 		xmlNode *next_src = src->children;
-		xmlAddChild(dst, src->children);
+		xmlUnlinkNode(next_src);
+		xmlAddChild(dst, next_src);
 		xmlUnlinkNode(src);
 		xmlFreeNode(src);
 		src = next_src;
@@ -162,12 +163,6 @@ get_node(xmlNode *node, const char *key, xmlNode **dst_node, bool leaf_only)
 		}
 	}
 	return false;
-}
-
-bool
-lab_xml_get_node(xmlNode *node, const char *key, xmlNode **dst_node)
-{
-	return get_node(node, key, dst_node, /* leaf_only */ false);
 }
 
 bool

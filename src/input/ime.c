@@ -3,14 +3,19 @@
 
 #include "input/ime.h"
 #include <assert.h>
+#include <wlr/types/wlr_input_method_v2.h>
 #include <wlr/types/wlr_layer_shell_v1.h>
+#include <wlr/types/wlr_output_layout.h>
+#include <wlr/types/wlr_scene.h>
+#include <wlr/types/wlr_seat.h>
+#include <wlr/types/wlr_text_input_v3.h>
 #include <wlr/types/wlr_virtual_keyboard_v1.h>
 #include <wlr/types/wlr_xdg_shell.h>
 #include "common/mem.h"
 #include "input/keyboard.h"
+#include "labwc.h"
 #include "node.h"
 #include "output.h"
-#include "view.h"
 
 #define SAME_CLIENT(wlr_obj1, wlr_obj2) \
 	(wl_resource_get_client((wlr_obj1)->resource) \
@@ -393,7 +398,8 @@ handle_input_method_new_popup_surface(struct wl_listener *listener, void *data)
 
 	popup->tree = wlr_scene_subsurface_tree_create(
 		relay->popup_tree, popup->popup_surface->surface);
-	node_descriptor_create(&popup->tree->node, LAB_NODE_DESC_IME_POPUP, NULL);
+	node_descriptor_create(&popup->tree->node, LAB_NODE_IME_POPUP,
+		/*view*/ NULL, /*data*/ NULL);
 
 	wl_list_insert(&relay->popups, &popup->link);
 

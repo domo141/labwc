@@ -3,12 +3,8 @@
 #include "window-rules.h"
 #include <assert.h>
 #include <stdbool.h>
-#include <cairo.h>
-#include <glib.h>
 #include <strings.h>
-#include <wlr/util/log.h>
 #include "action.h"
-#include "common/match.h"
 #include "config/rcxml.h"
 #include "labwc.h"
 #include "view.h"
@@ -36,7 +32,9 @@ view_matches_criteria(struct window_rule *rule, struct view *view)
 		.window_type = rule->window_type,
 		.sandbox_engine = rule->sandbox_engine,
 		.sandbox_app_id = rule->sandbox_app_id,
+		/* Must be synced with view_query_create() */
 		.maximized = VIEW_AXIS_INVALID,
+		.decoration = LAB_SSD_MODE_INVALID,
 	};
 
 	if (rule->match_once && other_instances_exist(view, &query)) {

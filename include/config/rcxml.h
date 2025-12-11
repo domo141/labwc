@@ -3,34 +3,30 @@
 #define LABWC_RCXML_H
 
 #include <stdbool.h>
-#include <stdio.h>
 #include <wayland-server-core.h>
+#include <wlr/util/box.h>
 #include <libxml/tree.h>
 
 #include "common/border.h"
-#include "common/buf.h"
 #include "common/font.h"
-#include "common/three-state.h"
-#include "config/touch.h"
-#include "config/tablet.h"
-#include "config/tablet-tool.h"
-#include "config/libinput.h"
-#include "resize-indicator.h"
-#include "ssd.h"
-#include "theme.h"
+#include "common/node-type.h"
+#include "config/types.h"
 
-enum view_placement_policy {
-	LAB_PLACE_INVALID = 0,
-	LAB_PLACE_CENTER,
-	LAB_PLACE_CURSOR,
-	LAB_PLACE_AUTOMATIC,
-	LAB_PLACE_CASCADE,
-};
+#define BUTTON_MAP_MAX 16
+
+/* max of one button of each type (no repeats) */
+#define TITLE_BUTTONS_MAX ((LAB_NODE_BUTTON_LAST + 1) - LAB_NODE_BUTTON_FIRST)
 
 enum adaptive_sync_mode {
 	LAB_ADAPTIVE_SYNC_DISABLED,
 	LAB_ADAPTIVE_SYNC_ENABLED,
 	LAB_ADAPTIVE_SYNC_FULLSCREEN,
+};
+
+enum resize_indicator_mode {
+	LAB_RESIZE_INDICATOR_NEVER = 0,
+	LAB_RESIZE_INDICATOR_ALWAYS,
+	LAB_RESIZE_INDICATOR_NON_PIXEL
 };
 
 enum tearing_mode {
@@ -48,9 +44,11 @@ enum tiling_events_mode {
 		(LAB_TILING_EVENTS_REGION | LAB_TILING_EVENTS_EDGE),
 };
 
-struct title_button {
-	enum ssd_part_type type;
-	struct wl_list link;
+struct buf;
+
+struct button_map_entry {
+	uint32_t from;
+	uint32_t to;
 };
 
 struct usable_area_override {
@@ -67,14 +65,18 @@ struct rcxml {
 
 	/* core */
 	bool xdg_shell_server_side_deco;
+	bool hide_maximized_window_titlebar;
 	int gap;
 	enum adaptive_sync_mode adaptive_sync;
 	enum tearing_mode allow_tearing;
 	bool auto_enable_outputs;
 	bool reuse_output_mode;
-	enum view_placement_policy placement_policy;
 	bool xwayland_persistence;
 	bool primary_selection;
+	char *prompt_command;
+
+	/* placement */
+	enum lab_placement_policy placement_policy;
 	int placement_cascade_offset_x;
 	int placement_cascade_offset_y;
 
@@ -87,8 +89,12 @@ struct rcxml {
 	char *theme_name;
 	char *icon_theme_name;
 	char *fallback_app_icon_name;
-	struct wl_list title_buttons_left;
-	struct wl_list title_buttons_right;
+
+	enum lab_node_type title_buttons_left[TITLE_BUTTONS_MAX];
+	int nr_title_buttons_left;
+	enum lab_node_type title_buttons_right[TITLE_BUTTONS_MAX];
+	int nr_title_buttons_right;
+
 	int corner_radius;
 	bool show_title;
 	bool title_layout_loaded;
@@ -110,7 +116,7 @@ struct rcxml {
 	/* keyboard */
 	int repeat_rate;
 	int repeat_delay;
-	enum three_state kb_numlock_enable;
+	enum lab_tristate kb_numlock_enable;
 	bool kb_layout_per_window;
 	struct wl_list keybinds;   /* struct keybind.link */
 
@@ -126,12 +132,12 @@ struct rcxml {
 		bool force_mouse_emulation;
 		char *output_name;
 		struct wlr_fbox box;
-		enum rotation rotation;
+		enum lab_rotation rotation;
 		uint16_t button_map_count;
 		struct button_map_entry button_map[BUTTON_MAP_MAX];
 	} tablet;
 	struct tablet_tool_config {
-		enum motion motion;
+		enum lab_motion motion;
 		double relative_motion_sensitivity;
 	} tablet_tool;
 
@@ -145,7 +151,8 @@ struct rcxml {
 	int unmaximize_threshold;
 
 	/* window snapping */
-	int snap_edge_range;
+	int snap_edge_range_inner;
+	int snap_edge_range_outer;
 	int snap_edge_corner_range;
 	bool snap_overlay_enabled;
 	int snap_overlay_delay_inner;
@@ -173,8 +180,13 @@ struct rcxml {
 		bool show;
 		bool preview;
 		bool outlines;
-		uint32_t criteria;
+		bool unshade;
+		enum lab_view_criteria criteria;
 		struct wl_list fields;  /* struct window_switcher_field.link */
+		enum cycle_osd_style style;
+		enum cycle_osd_output_criteria output_criteria;
+		char *thumbnail_label_format;
+		enum window_switcher_order order;
 	} window_switcher;
 
 	struct wl_list window_rules; /* struct window_rule.link */
@@ -193,7 +205,6 @@ struct rcxml {
 
 extern struct rcxml rc;
 
-void rcxml_parse_xml(struct buf *b);
 void rcxml_read(const char *filename);
 void rcxml_finish(void);
 

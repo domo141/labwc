@@ -2,16 +2,17 @@
 #ifndef LABWC_CURSOR_H
 #define LABWC_CURSOR_H
 
-#include <wlr/types/wlr_cursor.h>
-#include <wlr/util/edges.h>
-#include "ssd.h"
+#include <wayland-server-protocol.h>
+#include "common/edge.h"
+#include "common/node-type.h"
 
 struct view;
 struct seat;
 struct server;
+struct wlr_input_device;
+struct wlr_cursor;
 struct wlr_surface;
 struct wlr_scene_node;
-enum wl_pointer_button_state;
 
 /* Cursors used internally by labwc */
 enum lab_cursors {
@@ -33,35 +34,33 @@ struct cursor_context {
 	struct view *view;
 	struct wlr_scene_node *node;
 	struct wlr_surface *surface;
-	enum ssd_part_type type;
+	enum lab_node_type type;
 	double sx, sy;
 };
 
+/* Used to persistently store cursor context (e.g. in seat->pressed) */
+struct cursor_context_saved {
+	struct cursor_context ctx;
+	struct wl_listener view_destroy;
+	struct wl_listener node_destroy;
+	struct wl_listener surface_destroy;
+};
+
 /**
- * get_cursor_context - find view and scene_node at cursor
+ * get_cursor_context - find view, surface and scene_node at cursor
  *
- * Behavior if node points to a surface:
- *  - If surface is a layer-surface, type will be
- *    set to LAB_SSD_LAYER_SURFACE and view will be NULL.
+ * If the cursor is on a client-drawn surface:
+ * - ctx.{surface,node} points to the surface, which may be a subsurface.
+ * - ctx.view is set if the node is associated to a xdg/x11 window.
+ * - ctx.type is LAYER_SURFACE or UNMANAGED if the node is a layer-shell
+ *   surface or an X11 unmanaged surface. Otherwise, CLIENT is set.
  *
- *  - If surface is a 'lost' unmanaged xsurface (one
- *    with a never-mapped parent view), type will
- *    be set to LAB_SSD_UNMANAGED and view will be NULL.
+ * If the cursor is on a server-side component (SSD part and menu item):
+ * - ctx.node points to the root node of that component
+ * - ctx.view is set if the component is a SSD part
+ * - ctx.type specifies the component (e.g. MENU_ITEM, BORDER_TOP, BUTTON_ICONIFY)
  *
- *    'Lost' unmanaged xsurfaces are usually caused by
- *    X11 applications opening popups without setting
- *    the main window as parent. Example: VLC submenus.
- *
- *  - Any other surface will cause type to be set to
- *    LAB_SSD_CLIENT and return the attached view.
- *
- * Behavior if node points to internal elements:
- *  - type will be set to the appropriate enum value
- *    and view will be NULL if the node is not part of the SSD.
- *
- * If no node is found for the given layout coordinates,
- * type will be set to LAB_SSD_ROOT and view will be NULL.
- *
+ * If no node is found at cursor, ctx.type is set to ROOT.
  */
 struct cursor_context get_cursor_context(struct server *server);
 
@@ -74,6 +73,13 @@ void cursor_set(struct seat *seat, enum lab_cursors cursor);
 
 void cursor_set_visible(struct seat *seat, bool visible);
 
+/*
+ * Safely store a cursor context to saved_ctx. saved_ctx is cleared when either
+ * of its node, surface and view is destroyed.
+ */
+void cursor_context_save(struct cursor_context_saved *saved_ctx,
+	const struct cursor_context *ctx);
+
 /**
  * cursor_get_resize_edges - calculate resize edge based on cursor position
  * @cursor - the current cursor (usually server->seat.cursor)
@@ -85,20 +91,19 @@ void cursor_set_visible(struct seat *seat, bool visible);
  * This is mostly important when either resizing a window using a
  * keyboard modifier or when using the Resize action from a keybind.
  */
-uint32_t cursor_get_resize_edges(struct wlr_cursor *cursor,
+enum lab_edge cursor_get_resize_edges(struct wlr_cursor *cursor,
 	struct cursor_context *ctx);
 
 /**
- * cursor_get_from_edge - translate wlroots edge enum to lab_cursor enum
- * @resize_edges - WLR_EDGE_ combination like WLR_EDGE_TOP | WLR_EDGE_RIGHT
+ * cursor_get_from_edge - translate lab_edge enum to lab_cursor enum
+ * @resize_edges - edge(s) being resized
  *
- * Returns LAB_CURSOR_DEFAULT on WLR_EDGE_NONE
  * Returns the appropriate lab_cursors enum if @resize_edges
  * is one of the 4 corners or one of the 4 edges.
  *
- * Asserts on invalid edge combinations like WLR_EDGE_LEFT | WLR_EDGE_RIGHT
+ * Returns LAB_CURSOR_DEFAULT on any other value.
  */
-enum lab_cursors cursor_get_from_edge(uint32_t resize_edges);
+enum lab_cursors cursor_get_from_edge(enum lab_edge resize_edges);
 
 /**
  * cursor_update_focus - update cursor focus, may update the cursor icon

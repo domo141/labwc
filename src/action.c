@@ -6,27 +6,32 @@
 #include <string.h>
 #include <strings.h>
 #include <unistd.h>
+#include <wlr/types/wlr_cursor.h>
 #include <wlr/types/wlr_scene.h>
 #include <wlr/util/log.h>
 #include "action-prompt-codes.h"
+#include "common/buf.h"
 #include "common/macros.h"
 #include "common/list.h"
 #include "common/mem.h"
 #include "common/parse-bool.h"
 #include "common/spawn.h"
 #include "common/string-helpers.h"
+#include "config/rcxml.h"
+#include "cycle.h"
 #include "debug.h"
+#include "input/keyboard.h"
 #include "labwc.h"
 #include "magnifier.h"
 #include "menu/menu.h"
-#include "osd.h"
 #include "output.h"
 #include "output-virtual.h"
 #include "regions.h"
 #include "ssd.h"
+#include "theme.h"
+#include "translate.h"
 #include "view.h"
 #include "workspaces.h"
-#include "input/keyboard.h"
 
 enum action_arg_type {
 	LAB_ACTION_ARG_STR = 0,
@@ -277,7 +282,7 @@ action_get_arg(struct action *action, const char *key, enum action_arg_type type
 	return NULL;
 }
 
-static const char *
+const char *
 action_get_str(struct action *action, const char *key, const char *default_value)
 {
 	struct action_arg_str *arg = action_get_arg(action, key, LAB_ACTION_ARG_STR);
@@ -333,11 +338,6 @@ action_arg_from_xml_node(struct action *action, const char *nodename, const char
 		}
 		break;
 	case ACTION_TYPE_MOVE_TO_EDGE:
-		if (!strcasecmp(argument, "snapWindows")) {
-			action_arg_add_bool(action, argument, parse_bool(content, true));
-			goto cleanup;
-		}
-		/* Falls through */
 	case ACTION_TYPE_TOGGLE_SNAP_TO_EDGE:
 	case ACTION_TYPE_SNAP_TO_EDGE:
 	case ACTION_TYPE_GROW_TO_EDGE:
@@ -345,13 +345,24 @@ action_arg_from_xml_node(struct action *action, const char *nodename, const char
 		if (!strcmp(argument, "direction")) {
 			bool tiled = (action->type == ACTION_TYPE_TOGGLE_SNAP_TO_EDGE
 					|| action->type == ACTION_TYPE_SNAP_TO_EDGE);
-			enum view_edge edge = view_edge_parse(content, tiled, /*any*/ false);
-			if (edge == VIEW_EDGE_INVALID) {
+			enum lab_edge edge = lab_edge_parse(content, tiled, /*any*/ false);
+			if (edge == LAB_EDGE_NONE) {
 				wlr_log(WLR_ERROR, "Invalid argument for action %s: '%s' (%s)",
 					action_names[action->type], argument, content);
 			} else {
 				action_arg_add_int(action, argument, edge);
 			}
+			goto cleanup;
+		}
+		if (action->type == ACTION_TYPE_MOVE_TO_EDGE
+				&& !strcasecmp(argument, "snapWindows")) {
+			action_arg_add_bool(action, argument, parse_bool(content, true));
+			goto cleanup;
+		}
+		if ((action->type == ACTION_TYPE_SNAP_TO_EDGE
+					|| action->type == ACTION_TYPE_TOGGLE_SNAP_TO_EDGE)
+				&& !strcasecmp(argument, "combine")) {
+			action_arg_add_bool(action, argument, parse_bool(content, false));
 			goto cleanup;
 		}
 		break;
@@ -389,7 +400,7 @@ action_arg_from_xml_node(struct action *action, const char *nodename, const char
 		break;
 	case ACTION_TYPE_SET_DECORATIONS:
 		if (!strcmp(argument, "decorations")) {
-			enum ssd_mode mode = ssd_mode_parse(content);
+			enum lab_ssd_mode mode = ssd_mode_parse(content);
 			if (mode != LAB_SSD_MODE_INVALID) {
 				action_arg_add_int(action, argument, mode);
 			} else {
@@ -400,6 +411,20 @@ action_arg_from_xml_node(struct action *action, const char *nodename, const char
 		}
 		if (!strcasecmp(argument, "forceSSD")) {
 			action_arg_add_bool(action, argument, parse_bool(content, false));
+			goto cleanup;
+		}
+		break;
+	case ACTION_TYPE_RESIZE:
+		if (!strcmp(argument, "direction")) {
+			enum lab_edge edge = lab_edge_parse(content,
+				/*tiled*/ true, /*any*/ false);
+			if (edge == LAB_EDGE_NONE || edge == LAB_EDGE_CENTER) {
+				wlr_log(WLR_ERROR,
+					"Invalid argument for action %s: '%s' (%s)",
+					action_names[action->type], argument, content);
+			} else {
+				action_arg_add_int(action, argument, edge);
+			}
 			goto cleanup;
 		}
 		break;
@@ -438,6 +463,11 @@ action_arg_from_xml_node(struct action *action, const char *nodename, const char
 			action_arg_add_bool(action, argument, parse_bool(content, true));
 			goto cleanup;
 		}
+		if (!strcmp(argument, "toggle")) {
+			action_arg_add_bool(
+				action, argument, parse_bool(content, false));
+			goto cleanup;
+		}
 		break;
 	case ACTION_TYPE_TOGGLE_SNAP_TO_REGION:
 	case ACTION_TYPE_SNAP_TO_REGION:
@@ -453,9 +483,9 @@ action_arg_from_xml_node(struct action *action, const char *nodename, const char
 			goto cleanup;
 		}
 		if (!strcmp(argument, "direction")) {
-			enum view_edge edge = view_edge_parse(content,
+			enum lab_edge edge = lab_edge_parse(content,
 				/*tiled*/ false, /*any*/ false);
-			if (edge == VIEW_EDGE_INVALID) {
+			if (edge == LAB_EDGE_NONE) {
 				wlr_log(WLR_ERROR, "Invalid argument for action %s: '%s' (%s)",
 					action_names[action->type], argument, content);
 			} else {
@@ -477,7 +507,7 @@ action_arg_from_xml_node(struct action *action, const char *nodename, const char
 		break;
 	case ACTION_TYPE_AUTO_PLACE:
 		if (!strcmp(argument, "policy")) {
-			enum view_placement_policy policy =
+			enum lab_placement_policy policy =
 				view_placement_parse(content);
 			if (policy == LAB_PLACE_INVALID) {
 				wlr_log(WLR_ERROR, "Invalid argument for action %s: '%s' (%s)",
@@ -700,8 +730,8 @@ show_menu(struct server *server, struct view *view, struct cursor_context *ctx,
 		x = extent.x;
 		y = view->current.y;
 		/* Push the client menu underneath the button */
-		if (is_client_menu && ssd_part_contains(
-				LAB_SSD_BUTTON, ctx->type)) {
+		if (is_client_menu && node_type_contains(
+				LAB_NODE_BUTTON, ctx->type)) {
 			assert(ctx->node);
 			int lx, ly;
 			wlr_scene_node_coords(ctx->node, &lx, &ly);
@@ -816,14 +846,59 @@ handle_view_destroy(struct wl_listener *listener, void *data)
 }
 
 static void
+print_prompt_command(struct buf *buf, const char *format,
+		struct action *action, struct theme *theme)
+{
+	assert(format);
+
+	for (const char *p = format; *p; p++) {
+		/*
+		 * If we're not on a conversion specifier (like %m) then just
+		 * keep adding it to the buffer
+		 */
+		if (*p != '%') {
+			buf_add_char(buf, *p);
+			continue;
+		}
+
+		/* Process the %* conversion specifier */
+		++p;
+
+		switch (*p) {
+		case 'm':
+			buf_add(buf, action_get_str(action,
+					"message.prompt", "Choose wisely"));
+			break;
+		case 'n':
+			buf_add(buf, _("No"));
+			break;
+		case 'y':
+			buf_add(buf, _("Yes"));
+			break;
+		case 'b':
+			buf_add_hex_color(buf, theme->osd_bg_color);
+			break;
+		case 't':
+			buf_add_hex_color(buf, theme->osd_label_text_color);
+			break;
+		default:
+			wlr_log(WLR_ERROR,
+				"invalid prompt command conversion specifier '%c'", *p);
+			break;
+		}
+	}
+}
+
+static void
 action_prompt_create(struct view *view, struct server *server, struct action *action)
 {
-	char *command = strdup_printf("labnag -m \"%s\" -Z \"%s\" -Z \"%s\"",
-		action_get_str(action, "message.prompt", "Choose wisely"),
-		_("No"), _("Yes"));
+	struct buf command = BUF_INIT;
+	print_prompt_command(&command, rc.prompt_command, action, rc.theme);
+
+	wlr_log(WLR_INFO, "prompt command: '%s'", command.data);
 
 	int pipe_fd;
-	pid_t prompt_pid = spawn_piped(command, &pipe_fd);
+	pid_t prompt_pid = spawn_piped(command.data, &pipe_fd);
 	if (prompt_pid < 0) {
 		wlr_log(WLR_ERROR, "Failed to create action prompt");
 		goto cleanup;
@@ -847,7 +922,16 @@ action_prompt_create(struct view *view, struct server *server, struct action *ac
 	wl_list_insert(&prompts, &prompt->link);
 
 cleanup:
-	free(command);
+	buf_reset(&command);
+}
+
+void
+action_prompts_destroy(void)
+{
+	struct action_prompt *prompt, *tmp;
+	wl_list_for_each_safe(prompt, tmp, &prompts, link) {
+		action_prompt_destroy(prompt);
+	}
 }
 
 bool
@@ -864,7 +948,7 @@ action_check_prompt_result(pid_t pid, int exit_code)
 		if (exit_code == LAB_EXIT_SUCCESS) {
 			wlr_log(WLR_INFO, "Selected the 'then' branch");
 			actions = action_get_actionlist(prompt->action, "then");
-		} else if (exit_code == LAB_EXIT_TIMEOUT) {
+		} else if (exit_code == LAB_EXIT_CANCELLED) {
 			/* no-op */
 		} else {
 			wlr_log(WLR_INFO, "Selected the 'else' branch");
@@ -913,8 +997,8 @@ get_target_output(struct output *output, struct server *server,
 	if (output_name) {
 		target = output_from_name(server, output_name);
 	} else {
-		enum view_edge edge =
-			action_get_int(action, "direction", VIEW_EDGE_INVALID);
+		enum lab_edge edge =
+			action_get_int(action, "direction", LAB_EDGE_NONE);
 		bool wrap = action_get_bool(action, "wrap", false);
 		target = output_get_adjacent(output, edge, wrap);
 	}
@@ -1003,7 +1087,7 @@ run_action(struct view *view, struct server *server, struct action *action,
 	case ACTION_TYPE_MOVE_TO_EDGE:
 		if (view) {
 			/* Config parsing makes sure that direction is a valid direction */
-			enum view_edge edge = action_get_int(action, "direction", 0);
+			enum lab_edge edge = action_get_int(action, "direction", 0);
 			bool snap_to_windows = action_get_bool(action, "snapWindows", true);
 			view_move_to_edge(view, edge, snap_to_windows);
 		}
@@ -1012,7 +1096,7 @@ run_action(struct view *view, struct server *server, struct action *action,
 	case ACTION_TYPE_SNAP_TO_EDGE:
 		if (view) {
 			/* Config parsing makes sure that direction is a valid direction */
-			enum view_edge edge = action_get_int(action, "direction", 0);
+			enum lab_edge edge = action_get_int(action, "direction", 0);
 			if (action->type == ACTION_TYPE_TOGGLE_SNAP_TO_EDGE
 					&& view->maximized == VIEW_AXIS_NONE
 					&& !view->fullscreen
@@ -1022,37 +1106,37 @@ run_action(struct view *view, struct server *server, struct action *action,
 				view_apply_natural_geometry(view);
 				break;
 			}
-			view_snap_to_edge(view, edge,
-				/*across_outputs*/ true,
-				/*store_natural_geometry*/ true);
+			bool combine = action_get_bool(action, "combine", false);
+			view_snap_to_edge(view, edge, /*across_outputs*/ true,
+				combine, /*store_natural_geometry*/ true);
 		}
 		break;
 	case ACTION_TYPE_GROW_TO_EDGE:
 		if (view) {
 			/* Config parsing makes sure that direction is a valid direction */
-			enum view_edge edge = action_get_int(action, "direction", 0);
+			enum lab_edge edge = action_get_int(action, "direction", 0);
 			view_grow_to_edge(view, edge);
 		}
 		break;
 	case ACTION_TYPE_SHRINK_TO_EDGE:
 		if (view) {
 			/* Config parsing makes sure that direction is a valid direction */
-			enum view_edge edge = action_get_int(action, "direction", 0);
+			enum lab_edge edge = action_get_int(action, "direction", 0);
 			view_shrink_to_edge(view, edge);
 		}
 		break;
 	case ACTION_TYPE_NEXT_WINDOW:
-		if (server->input_mode == LAB_INPUT_STATE_WINDOW_SWITCHER) {
-			osd_cycle(server, LAB_CYCLE_DIR_FORWARD);
+		if (server->input_mode == LAB_INPUT_STATE_CYCLE) {
+			cycle_step(server, LAB_CYCLE_DIR_FORWARD);
 		} else {
-			osd_begin(server, LAB_CYCLE_DIR_FORWARD);
+			cycle_begin(server, LAB_CYCLE_DIR_FORWARD);
 		}
 		break;
 	case ACTION_TYPE_PREVIOUS_WINDOW:
-		if (server->input_mode == LAB_INPUT_STATE_WINDOW_SWITCHER) {
-			osd_cycle(server, LAB_CYCLE_DIR_BACKWARD);
+		if (server->input_mode == LAB_INPUT_STATE_CYCLE) {
+			cycle_step(server, LAB_CYCLE_DIR_BACKWARD);
 		} else {
-			osd_begin(server, LAB_CYCLE_DIR_BACKWARD);
+			cycle_begin(server, LAB_CYCLE_DIR_BACKWARD);
 		}
 		break;
 	case ACTION_TYPE_RECONFIGURE:
@@ -1095,7 +1179,7 @@ run_action(struct view *view, struct server *server, struct action *action,
 		break;
 	case ACTION_TYPE_SET_DECORATIONS:
 		if (view) {
-			enum ssd_mode mode = action_get_int(action,
+			enum lab_ssd_mode mode = action_get_int(action,
 				"decorations", LAB_SSD_MODE_FULL);
 			bool force_ssd = action_get_bool(action,
 				"forceSSD", false);
@@ -1137,7 +1221,8 @@ run_action(struct view *view, struct server *server, struct action *action,
 		break;
 	case ACTION_TYPE_MOVE:
 		if (view) {
-			interactive_begin(view, LAB_INPUT_STATE_MOVE, 0);
+			interactive_begin(view, LAB_INPUT_STATE_MOVE,
+				LAB_EDGE_NONE);
 		}
 		break;
 	case ACTION_TYPE_RAISE:
@@ -1152,8 +1237,17 @@ run_action(struct view *view, struct server *server, struct action *action,
 		break;
 	case ACTION_TYPE_RESIZE:
 		if (view) {
-			uint32_t resize_edges = cursor_get_resize_edges(
-				server->seat.cursor, ctx);
+			/*
+			 * If a direction was specified in the config, honour it.
+			 * Otherwise, fall back to determining the resize edges from
+			 * the current cursor position (existing behaviour).
+			 */
+			enum lab_edge resize_edges =
+				action_get_int(action, "direction", LAB_EDGE_NONE);
+			if (resize_edges == LAB_EDGE_NONE) {
+				resize_edges = cursor_get_resize_edges(
+					server->seat.cursor, ctx);
+			}
 			interactive_begin(view, LAB_INPUT_STATE_RESIZE,
 				resize_edges);
 		}
@@ -1226,6 +1320,13 @@ run_action(struct view *view, struct server *server, struct action *action,
 		 */
 		struct workspace *target_workspace = workspaces_find(
 			server->workspaces.current, to, wrap);
+		if (action->type == ACTION_TYPE_GO_TO_DESKTOP) {
+			bool toggle = action_get_bool(action, "toggle", false);
+			if (target_workspace == server->workspaces.current
+				&& toggle) {
+				target_workspace = server->workspaces.last;
+			}
+		}
 		if (!target_workspace) {
 			break;
 		}
@@ -1378,7 +1479,7 @@ run_action(struct view *view, struct server *server, struct action *action,
 	}
 	case ACTION_TYPE_AUTO_PLACE:
 		if (view) {
-			enum view_placement_policy policy =
+			enum lab_placement_policy policy =
 				action_get_int(action, "policy", LAB_PLACE_AUTOMATIC);
 			view_place_by_policy(view,
 				/* allow_cursor */ true, policy);
@@ -1491,7 +1592,7 @@ actions_run(struct view *activator, struct server *server,
 
 	struct action *action;
 	wl_list_for_each(action, actions, link) {
-		if (server->input_mode == LAB_INPUT_STATE_WINDOW_SWITCHER
+		if (server->input_mode == LAB_INPUT_STATE_CYCLE
 				&& action->type != ACTION_TYPE_NEXT_WINDOW
 				&& action->type != ACTION_TYPE_PREVIOUS_WINDOW) {
 			wlr_log(WLR_INFO, "Only NextWindow or PreviousWindow "

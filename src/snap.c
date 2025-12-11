@@ -2,11 +2,13 @@
 #include "snap.h"
 #include <assert.h>
 #include <wlr/util/box.h>
+#include <wlr/util/log.h>
 #include "common/border.h"
+#include "config/rcxml.h"
 #include "edges.h"
-#include "labwc.h"
 #include "output.h"
 #include "snap-constraints.h"
+#include "ssd.h"
 #include "view.h"
 
 static void
@@ -50,7 +52,7 @@ check_edge(int *next, struct edge current, struct edge target,
 }
 
 void
-snap_move_to_edge(struct view *view, enum view_edge direction,
+snap_move_to_edge(struct view *view, enum lab_edge direction,
 		bool snap_to_windows, int *dx, int *dy)
 {
 	assert(view);
@@ -79,26 +81,26 @@ snap_move_to_edge(struct view *view, enum view_edge direction,
 	 * needs no further consideration.
 	 */
 	switch (direction) {
-	case VIEW_EDGE_LEFT:
+	case LAB_EDGE_LEFT:
 		target.x = usable.x + ssd.left + rc.gap;
 		if (target.x >= view->pending.x) {
 			return;
 		}
 		break;
-	case VIEW_EDGE_RIGHT:
+	case LAB_EDGE_RIGHT:
 		target.x = usable.x + usable.width
 			- rc.gap - target.width - ssd.right;
 		if (target.x <= view->pending.x) {
 			return;
 		}
 		break;
-	case VIEW_EDGE_UP:
+	case LAB_EDGE_TOP:
 		target.y = usable.y + ssd.top + rc.gap;
 		if (target.y >= view->pending.y) {
 			return;
 		}
 		break;
-	case VIEW_EDGE_DOWN:
+	case LAB_EDGE_BOTTOM:
 		target.y = usable.y + usable.height - rc.gap - ssd.bottom
 			- view_effective_height(view, /* use_pending */ true);
 		if (target.y <= view->pending.y) {
@@ -133,7 +135,7 @@ snap_move_to_edge(struct view *view, enum view_edge direction,
 
 void
 snap_grow_to_next_edge(struct view *view,
-		enum view_edge direction, struct wlr_box *geo)
+		enum lab_edge direction, struct wlr_box *geo)
 {
 	assert(view);
 	assert(!view->shaded);
@@ -148,29 +150,29 @@ snap_grow_to_next_edge(struct view *view,
 
 	struct border ssd = ssd_thickness(view);
 	struct wlr_box usable = output_usable_area_in_layout_coords(output);
-	uint32_t resize_edges;
+	enum lab_edge resize_edges;
 
 	/* First try to grow the view to the relevant edge of its output. */
 	switch (direction) {
-	case VIEW_EDGE_LEFT:
+	case LAB_EDGE_LEFT:
 		geo->x = usable.x + ssd.left + rc.gap;
 		geo->width = view->pending.x + view->pending.width - geo->x;
-		resize_edges = WLR_EDGE_LEFT;
+		resize_edges = LAB_EDGE_LEFT;
 		break;
-	case VIEW_EDGE_RIGHT:
+	case LAB_EDGE_RIGHT:
 		geo->width = usable.x + usable.width
 			- rc.gap - ssd.right - view->pending.x;
-		resize_edges = WLR_EDGE_RIGHT;
+		resize_edges = LAB_EDGE_RIGHT;
 		break;
-	case VIEW_EDGE_UP:
+	case LAB_EDGE_TOP:
 		geo->y = usable.y + ssd.top + rc.gap;
 		geo->height = view->pending.y + view->pending.height - geo->y;
-		resize_edges = WLR_EDGE_TOP;
+		resize_edges = LAB_EDGE_TOP;
 		break;
-	case VIEW_EDGE_DOWN:
+	case LAB_EDGE_BOTTOM:
 		geo->height = usable.y + usable.height
 			- rc.gap - ssd.bottom - view->pending.y;
-		resize_edges = WLR_EDGE_BOTTOM;
+		resize_edges = LAB_EDGE_BOTTOM;
 		break;
 	default:
 		return;
@@ -213,14 +215,13 @@ snap_grow_to_next_edge(struct view *view,
 
 void
 snap_shrink_to_next_edge(struct view *view,
-		enum view_edge direction, struct wlr_box *geo)
+		enum lab_edge direction, struct wlr_box *geo)
 {
 	assert(view);
 	assert(!view->shaded);
 
 	*geo = view->pending;
-	uint32_t resize_edges;
-	int min_width = view_get_min_width();
+	enum lab_edge resize_edges;
 
 	/*
 	 * First shrink the view along the relevant edge. The maximum shrink
@@ -228,23 +229,23 @@ snap_shrink_to_next_edge(struct view *view,
 	 * minimum size requirements.
 	 */
 	switch (direction) {
-	case VIEW_EDGE_RIGHT:
-		geo->width = MAX(geo->width / 2, min_width);
+	case LAB_EDGE_RIGHT:
+		geo->width = MAX(geo->width / 2, LAB_MIN_VIEW_WIDTH);
 		geo->x = view->pending.x + view->pending.width - geo->width;
-		resize_edges = WLR_EDGE_LEFT;
+		resize_edges = LAB_EDGE_LEFT;
 		break;
-	case VIEW_EDGE_LEFT:
-		geo->width = MAX(geo->width / 2, min_width);
-		resize_edges = WLR_EDGE_RIGHT;
+	case LAB_EDGE_LEFT:
+		geo->width = MAX(geo->width / 2, LAB_MIN_VIEW_WIDTH);
+		resize_edges = LAB_EDGE_RIGHT;
 		break;
-	case VIEW_EDGE_DOWN:
+	case LAB_EDGE_BOTTOM:
 		geo->height = MAX(geo->height / 2, LAB_MIN_VIEW_HEIGHT);
 		geo->y = view->pending.y + view->pending.height - geo->height;
-		resize_edges = WLR_EDGE_TOP;
+		resize_edges = LAB_EDGE_TOP;
 		break;
-	case VIEW_EDGE_UP:
+	case LAB_EDGE_TOP:
 		geo->height = MAX(geo->height / 2, LAB_MIN_VIEW_HEIGHT);
-		resize_edges = WLR_EDGE_BOTTOM;
+		resize_edges = LAB_EDGE_BOTTOM;
 		break;
 	default:
 		return;

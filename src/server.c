@@ -19,7 +19,6 @@
 #include <wlr/types/wlr_ext_image_copy_capture_v1.h>
 #include <wlr/types/wlr_foreign_toplevel_management_v1.h>
 #include <wlr/types/wlr_fractional_scale_v1.h>
-#include <wlr/types/wlr_gamma_control_v1.h>
 #include <wlr/types/wlr_input_method_v2.h>
 #include <wlr/types/wlr_linux_drm_syncobj_v1.h>
 #include <wlr/types/wlr_output_power_management_v1.h>
@@ -45,10 +44,8 @@
 #include "xwayland-shell-v1-protocol.h"
 #endif
 
-#include "drm-lease-v1-protocol.h"
 #include "action.h"
 #include "common/macros.h"
-#include "common/scaled-scene-buffer.h"
 #include "config/rcxml.h"
 #include "config/session.h"
 #include "decorations.h"
@@ -60,11 +57,12 @@
 #include "magnifier.h"
 #include "menu/menu.h"
 #include "output.h"
-#include "output-state.h"
 #include "output-virtual.h"
 #include "regions.h"
 #include "resize-indicator.h"
+#include "scaled-buffer/scaled-buffer.h"
 #include "session-lock.h"
+#include "ssd.h"
 #include "theme.h"
 #include "view.h"
 #include "workspaces.h"
@@ -80,7 +78,10 @@
 static void
 reload_config_and_theme(struct server *server)
 {
-	scaled_scene_buffer_invalidate_sharing();
+	/* Avoid UAF when dialog client is used during reconfigure */
+	action_prompts_destroy();
+
+	scaled_buffer_invalidate_sharing();
 	rcxml_finish();
 	rcxml_read(rc.config_file);
 	theme_finish(server->theme);
@@ -275,6 +276,7 @@ allow_for_sandbox(const struct wlr_security_context_v1_state *security_state,
 		"zxdg_importer_v1",
 		"zxdg_importer_v2",
 		"xdg_toplevel_icon_manager_v1",
+		"xdg_dialog_v1",
 		/* plus */
 		"wp_alpha_modifier_v1",
 		"wp_linux_drm_syncobj_manager_v1",
@@ -547,8 +549,7 @@ server_init(struct server *server)
 
 	wl_list_init(&server->views);
 	wl_list_init(&server->unmanaged_surfaces);
-
-	server->ssd_hover_state = ssd_hover_state_new();
+	wl_list_init(&server->cycle.views);
 
 	server->scene = wlr_scene_create();
 	if (!server->scene) {
@@ -562,21 +563,21 @@ server_init(struct server *server)
 	 * z-order for nodes which cover the whole work-area.  For per-output
 	 * scene-trees, see handle_new_output() in src/output.c
 	 *
-	 * | Type              | Scene Tree       | Per Output | Example
-	 * | ----------------- | ---------------- | ---------- | -------
-	 * | ext-session       | lock-screen      | Yes        | swaylock
-	 * | osd               | osd_tree         | Yes        |
-	 * | compositor-menu   | menu_tree        | No         | root-menu
-	 * | layer-shell       | layer-popups     | Yes        |
-	 * | layer-shell       | overlay-layer    | Yes        |
-	 * | layer-shell       | top-layer        | Yes        | waybar
-	 * | xwayland-OR       | unmanaged        | No         | dmenu
-	 * | xdg-popups        | xdg-popups       | No         |
-	 * | toplevels windows | always-on-top    | No         |
-	 * | toplevels windows | normal           | No         | firefox
-	 * | toplevels windows | always-on-bottom | No         | pcmanfm-qt --desktop
-	 * | layer-shell       | bottom-layer     | Yes        | waybar
-	 * | layer-shell       | background-layer | Yes        | swaybg
+	 * | Type                | Scene Tree       | Per Output | Example
+	 * | ------------------- | ---------------- | ---------- | -------
+	 * | ext-session         | lock-screen      | Yes        | swaylock
+	 * | window switcher OSD | cycle_osd_tree   | Yes        |
+	 * | compositor-menu     | menu_tree        | No         | root-menu
+	 * | layer-shell         | layer-popups     | Yes        |
+	 * | layer-shell         | overlay-layer    | Yes        |
+	 * | layer-shell         | top-layer        | Yes        | waybar
+	 * | xwayland-OR         | unmanaged        | No         | dmenu
+	 * | xdg-popups          | xdg-popups       | No         |
+	 * | toplevels windows   | always-on-top    | No         |
+	 * | toplevels windows   | normal           | No         | firefox
+	 * | toplevels windows   | always-on-bottom | No         | pcmanfm-qt --desktop
+	 * | layer-shell         | bottom-layer     | Yes        | waybar
+	 * | layer-shell         | background-layer | Yes        | swaybg
 	 */
 
 	server->view_tree_always_on_bottom = wlr_scene_tree_create(&server->scene->tree);
@@ -662,7 +663,7 @@ server_init(struct server *server)
 	wlr_fractional_scale_manager_v1_create(server->wl_display,
 		LAB_WLR_FRACTIONAL_SCALE_V1_VERSION);
 
-	idle_manager_create(server->wl_display, server->seat.seat);
+	idle_manager_create(server->wl_display);
 
 	server->relative_pointer_manager = wlr_relative_pointer_manager_v1_create(
 		server->wl_display);
@@ -794,5 +795,4 @@ server_finish(struct server *server)
 	wlr_scene_node_destroy(&server->scene->tree.node);
 
 	wl_display_destroy(server->wl_display);
-	free(server->ssd_hover_state);
 }

@@ -2,12 +2,12 @@
 #define _POSIX_C_SOURCE 200809L
 #include "input/cursor.h"
 #include <assert.h>
-#include <linux/input-event-codes.h>
-#include <sys/time.h>
 #include <time.h>
 #include <wlr/backend/libinput.h>
+#include <wlr/types/wlr_cursor.h>
 #include <wlr/types/wlr_cursor_shape_v1.h>
 #include <wlr/types/wlr_data_device.h>
+#include <wlr/types/wlr_layer_shell_v1.h>
 #include <wlr/types/wlr_pointer_constraints_v1.h>
 #include <wlr/types/wlr_primary_selection.h>
 #include <wlr/types/wlr_relative_pointer_v1.h>
@@ -19,9 +19,9 @@
 #include "action.h"
 #include "common/macros.h"
 #include "common/mem.h"
-#include "common/scene-helpers.h"
-#include "common/surface-helpers.h"
 #include "config/mousebind.h"
+#include "config/rcxml.h"
+#include "cycle.h"
 #include "dnd.h"
 #include "idle.h"
 #include "input/gestures.h"
@@ -32,7 +32,6 @@
 #include "layers.h"
 #include "menu/menu.h"
 #include "output.h"
-#include "regions.h"
 #include "resistance.h"
 #include "resize-outlines.h"
 #include "ssd.h"
@@ -87,40 +86,34 @@ static_assert(
 	"X11 cursor names are out of sync");
 
 enum lab_cursors
-cursor_get_from_edge(uint32_t resize_edges)
+cursor_get_from_edge(enum lab_edge resize_edges)
 {
 	switch (resize_edges) {
-	case WLR_EDGE_NONE:
-		return LAB_CURSOR_DEFAULT;
-	case WLR_EDGE_TOP | WLR_EDGE_LEFT:
+	case LAB_EDGES_TOP_LEFT:
 		return LAB_CURSOR_RESIZE_NW;
-	case WLR_EDGE_TOP:
+	case LAB_EDGE_TOP:
 		return LAB_CURSOR_RESIZE_N;
-	case WLR_EDGE_TOP | WLR_EDGE_RIGHT:
+	case LAB_EDGES_TOP_RIGHT:
 		return LAB_CURSOR_RESIZE_NE;
-	case WLR_EDGE_RIGHT:
+	case LAB_EDGE_RIGHT:
 		return LAB_CURSOR_RESIZE_E;
-	case WLR_EDGE_BOTTOM | WLR_EDGE_RIGHT:
+	case LAB_EDGES_BOTTOM_RIGHT:
 		return LAB_CURSOR_RESIZE_SE;
-	case WLR_EDGE_BOTTOM:
+	case LAB_EDGE_BOTTOM:
 		return LAB_CURSOR_RESIZE_S;
-	case WLR_EDGE_BOTTOM | WLR_EDGE_LEFT:
+	case LAB_EDGES_BOTTOM_LEFT:
 		return LAB_CURSOR_RESIZE_SW;
-	case WLR_EDGE_LEFT:
+	case LAB_EDGE_LEFT:
 		return LAB_CURSOR_RESIZE_W;
 	default:
-		wlr_log(WLR_ERROR,
-			"Failed to resolve wlroots edge %u to cursor name", resize_edges);
-		assert(false);
+		return LAB_CURSOR_DEFAULT;
 	}
-
-	return LAB_CURSOR_DEFAULT;
 }
 
 static enum lab_cursors
-cursor_get_from_ssd(enum ssd_part_type view_area)
+cursor_get_from_ssd(enum lab_node_type view_area)
 {
-	uint32_t resize_edges = ssd_resize_edges(view_area);
+	enum lab_edge resize_edges = node_type_to_edges(view_area);
 	return cursor_get_from_edge(resize_edges);
 }
 
@@ -296,8 +289,9 @@ process_cursor_move(struct server *server, uint32_t time)
 		interactive_anchor_to_cursor(server, &new_geo);
 		/* Shaded clients will not process resize events until unshaded */
 		view_set_shade(view, false);
+		view_set_maximized(view, VIEW_AXIS_NONE);
 		view_set_untiled(view);
-		view_restore_to(view, new_geo);
+		view_move_resize(view, new_geo);
 		x = new_geo.x;
 		y = new_geo.y;
 	}
@@ -341,32 +335,32 @@ process_cursor_resize(struct server *server, uint32_t time)
 	struct view *view = server->grabbed_view;
 	struct wlr_box new_view_geo = view->current;
 
-	if (server->resize_edges & WLR_EDGE_TOP) {
+	if (server->resize_edges & LAB_EDGE_TOP) {
 		/* Shift y to anchor bottom edge when resizing top */
 		new_view_geo.y = server->grab_box.y + dy;
 		new_view_geo.height = server->grab_box.height - dy;
-	} else if (server->resize_edges & WLR_EDGE_BOTTOM) {
+	} else if (server->resize_edges & LAB_EDGE_BOTTOM) {
 		new_view_geo.height = server->grab_box.height + dy;
 	}
 
-	if (server->resize_edges & WLR_EDGE_LEFT) {
+	if (server->resize_edges & LAB_EDGE_LEFT) {
 		/* Shift x to anchor right edge when resizing left */
 		new_view_geo.x = server->grab_box.x + dx;
 		new_view_geo.width = server->grab_box.width - dx;
-	} else if (server->resize_edges & WLR_EDGE_RIGHT) {
+	} else if (server->resize_edges & LAB_EDGE_RIGHT) {
 		new_view_geo.width = server->grab_box.width + dx;
 	}
 
 	resistance_resize_apply(view, &new_view_geo);
 	view_adjust_size(view, &new_view_geo.width, &new_view_geo.height);
 
-	if (server->resize_edges & WLR_EDGE_TOP) {
+	if (server->resize_edges & LAB_EDGE_TOP) {
 		/* After size adjustments, make sure to anchor bottom edge */
 		new_view_geo.y = server->grab_box.y +
 			server->grab_box.height - new_view_geo.height;
 	}
 
-	if (server->resize_edges & WLR_EDGE_LEFT) {
+	if (server->resize_edges & LAB_EDGE_LEFT) {
 		/* After size adjustments, make sure to anchor bottom right */
 		new_view_geo.x = server->grab_box.x +
 			server->grab_box.width - new_view_geo.width;
@@ -443,8 +437,72 @@ cursor_update_image(struct seat *seat)
 		cursor_names[cursor]);
 }
 
+static void
+clear_cursor_context(struct cursor_context_saved *saved_ctx)
+{
+	if (saved_ctx->node_destroy.notify) {
+		wl_list_remove(&saved_ctx->node_destroy.link);
+	}
+	if (saved_ctx->surface_destroy.notify) {
+		wl_list_remove(&saved_ctx->surface_destroy.link);
+	}
+	if (saved_ctx->view_destroy.notify) {
+		wl_list_remove(&saved_ctx->view_destroy.link);
+	}
+	*saved_ctx = (struct cursor_context_saved) {0};
+}
+
+static void
+handle_ctx_node_destroy(struct wl_listener *listener, void *data)
+{
+	struct cursor_context_saved *saved_ctx =
+		wl_container_of(listener, saved_ctx, node_destroy);
+	clear_cursor_context(saved_ctx);
+}
+
+static void
+handle_ctx_surface_destroy(struct wl_listener *listener, void *data)
+{
+	struct cursor_context_saved *saved_ctx =
+		wl_container_of(listener, saved_ctx, surface_destroy);
+	clear_cursor_context(saved_ctx);
+}
+
+static void
+handle_ctx_view_destroy(struct wl_listener *listener, void *data)
+{
+	struct cursor_context_saved *saved_ctx =
+		wl_container_of(listener, saved_ctx, view_destroy);
+	clear_cursor_context(saved_ctx);
+}
+
+void
+cursor_context_save(struct cursor_context_saved *saved_ctx,
+		const struct cursor_context *ctx)
+{
+	assert(saved_ctx);
+
+	clear_cursor_context(saved_ctx);
+	if (!ctx) {
+		return;
+	}
+	saved_ctx->ctx = *ctx;
+	if (ctx->node) {
+		saved_ctx->node_destroy.notify = handle_ctx_node_destroy;
+		wl_signal_add(&ctx->node->events.destroy, &saved_ctx->node_destroy);
+	}
+	if (ctx->surface) {
+		saved_ctx->surface_destroy.notify = handle_ctx_surface_destroy;
+		wl_signal_add(&ctx->surface->events.destroy, &saved_ctx->surface_destroy);
+	}
+	if (ctx->view) {
+		saved_ctx->view_destroy.notify = handle_ctx_view_destroy;
+		wl_signal_add(&ctx->view->events.destroy, &saved_ctx->view_destroy);
+	}
+}
+
 static bool
-update_pressed_surface(struct seat *seat, struct cursor_context *ctx)
+update_pressed_surface(struct seat *seat, const struct cursor_context *ctx)
 {
 	/*
 	 * In most cases, we don't want to leave one surface and enter
@@ -460,66 +518,28 @@ update_pressed_surface(struct seat *seat, struct cursor_context *ctx)
 	if (!wlr_seat_pointer_has_grab(seat->seat)) {
 		return false;
 	}
-	if (seat->pressed.surface && ctx->surface != seat->pressed.surface) {
+	if (seat->pressed.ctx.surface && ctx->surface != seat->pressed.ctx.surface) {
 		struct wlr_surface *toplevel = get_toplevel(ctx->surface);
-		if (toplevel && toplevel == get_toplevel(seat->pressed.surface)) {
-			seat_set_pressed(seat, ctx);
+		if (toplevel && toplevel == get_toplevel(seat->pressed.ctx.surface)) {
+			cursor_context_save(&seat->pressed, ctx);
 			return true;
 		}
 	}
 	return false;
 }
 
-static bool
-process_cursor_motion_out_of_surface(struct server *server,
-		double *sx, double *sy)
-{
-	struct view *view = server->seat.pressed.view;
-	struct wlr_scene_node *node = server->seat.pressed.node;
-	struct wlr_surface *surface = server->seat.pressed.surface;
-	assert(surface);
-	int lx, ly;
-
-	if (node && wlr_subsurface_try_from_wlr_surface(surface)) {
-		wlr_scene_node_coords(node, &lx, &ly);
-	} else if (view) {
-		lx = view->current.x;
-		ly = view->current.y;
-		/* Take into account invisible xdg-shell CSD borders */
-		if (view->type == LAB_XDG_SHELL_VIEW) {
-			struct wlr_xdg_surface *xdg_surface = xdg_surface_from_view(view);
-			lx -= xdg_surface->geometry.x;
-			ly -= xdg_surface->geometry.y;
-		}
-	} else if (node && wlr_layer_surface_v1_try_from_wlr_surface(surface)) {
-		wlr_scene_node_coords(node, &lx, &ly);
-#if HAVE_XWAYLAND
-	} else if (node && node->parent == server->unmanaged_tree) {
-		wlr_scene_node_coords(node, &lx, &ly);
-#endif
-	} else {
-		wlr_log(WLR_ERROR, "Can't detect surface for out-of-surface movement");
-		return false;
-	}
-
-	*sx = server->seat.cursor->x - lx;
-	*sy = server->seat.cursor->y - ly;
-
-	return true;
-}
-
 /*
  * Common logic shared by cursor_update_focus(), process_cursor_motion()
- * and cursor_axis()
+ * and process_cursor_axis()
  */
-static bool
-cursor_update_common(struct server *server, struct cursor_context *ctx,
-		bool cursor_has_moved, double *sx, double *sy)
+static void
+cursor_update_common(struct server *server, const struct cursor_context *ctx,
+		struct cursor_context *notified_ctx)
 {
 	struct seat *seat = &server->seat;
 	struct wlr_seat *wlr_seat = seat->seat;
 
-	ssd_update_button_hover(ctx->node, server->ssd_hover_state);
+	ssd_update_hovered_button(server, ctx->node);
 
 	if (server->input_mode != LAB_INPUT_STATE_PASSTHROUGH) {
 		/*
@@ -527,14 +547,14 @@ cursor_update_common(struct server *server, struct cursor_context *ctx,
 		 * interactive move/resize, window switcher and
 		 * menu interaction.
 		 */
-		return false;
+		return;
 	}
 
 	/* TODO: verify drag_icon logic */
-	if (seat->pressed.surface && ctx->surface != seat->pressed.surface
+	if (seat->pressed.ctx.surface && ctx->surface != seat->pressed.ctx.surface
 			&& !update_pressed_surface(seat, ctx)
 			&& !seat->drag.active) {
-		if (cursor_has_moved) {
+		if (notified_ctx) {
 			/*
 			 * Button has been pressed while over another
 			 * surface and is still held down.  Just send
@@ -542,9 +562,17 @@ cursor_update_common(struct server *server, struct cursor_context *ctx,
 			 * we can keep scrolling or selecting text even
 			 * if the cursor moves outside of the surface.
 			 */
-			return process_cursor_motion_out_of_surface(server, sx, sy);
+			int lx, ly;
+			wlr_scene_node_coords(seat->pressed.ctx.node, &lx, &ly);
+			*notified_ctx = seat->pressed.ctx;
+			notified_ctx->sx = server->seat.cursor->x - lx;
+			notified_ctx->sy = server->seat.cursor->y - ly;
 		}
-		return false;
+		return;
+	}
+
+	if (notified_ctx) {
+		*notified_ctx = *ctx;
 	}
 
 	if (ctx->surface) {
@@ -556,11 +584,6 @@ cursor_update_common(struct server *server, struct cursor_context *ctx,
 		wlr_seat_pointer_notify_enter(wlr_seat, ctx->surface,
 			ctx->sx, ctx->sy);
 		seat->server_cursor = LAB_CURSOR_CLIENT;
-		if (cursor_has_moved) {
-			*sx = ctx->sx;
-			*sy = ctx->sy;
-			return true;
-		}
 	} else {
 		/*
 		 * Cursor is over a server (labwc) surface.  Clear focus
@@ -578,21 +601,20 @@ cursor_update_common(struct server *server, struct cursor_context *ctx,
 			cursor_set(seat, cursor);
 		}
 	}
-	return false;
 }
 
-uint32_t
+enum lab_edge
 cursor_get_resize_edges(struct wlr_cursor *cursor, struct cursor_context *ctx)
 {
-	uint32_t resize_edges = ssd_resize_edges(ctx->type);
+	enum lab_edge resize_edges = node_type_to_edges(ctx->type);
 	if (ctx->view && !resize_edges) {
 		struct wlr_box box = ctx->view->current;
 		resize_edges |=
 			(int)cursor->x < box.x + box.width / 2 ?
-				WLR_EDGE_LEFT : WLR_EDGE_RIGHT;
+				LAB_EDGE_LEFT : LAB_EDGE_RIGHT;
 		resize_edges |=
 			(int)cursor->y < box.y + box.height / 2 ?
-				WLR_EDGE_TOP : WLR_EDGE_BOTTOM;
+				LAB_EDGE_TOP : LAB_EDGE_BOTTOM;
 	}
 	return resize_edges;
 }
@@ -613,7 +635,7 @@ cursor_process_motion(struct server *server, uint32_t time, double *sx, double *
 	struct cursor_context ctx = get_cursor_context(server);
 	struct seat *seat = &server->seat;
 
-	if (ctx.type == LAB_SSD_MENU) {
+	if (ctx.type == LAB_NODE_MENUITEM) {
 		menu_process_cursor_motion(ctx.node);
 		cursor_set(&server->seat, LAB_CURSOR_DEFAULT);
 		return false;
@@ -625,7 +647,7 @@ cursor_process_motion(struct server *server, uint32_t time, double *sx, double *
 
 	struct mousebind *mousebind;
 	wl_list_for_each(mousebind, &rc.mousebinds, link) {
-		if (ctx.type == LAB_SSD_CLIENT
+		if (ctx.type == LAB_NODE_CLIENT
 				&& view_inhibits_actions(ctx.view, &mousebind->actions)) {
 			continue;
 		}
@@ -637,32 +659,45 @@ cursor_process_motion(struct server *server, uint32_t time, double *sx, double *
 			 * moving/resizing the wrong view
 			 */
 			mousebind->pressed_in_context = false;
-			actions_run(seat->pressed.view, server,
-				&mousebind->actions, &seat->pressed);
+			actions_run(seat->pressed.ctx.view, server,
+				&mousebind->actions, &seat->pressed.ctx);
 		}
 	}
 
-	struct wlr_surface *old_focused_surface =
-		seat->seat->pointer_state.focused_surface;
+	/*
+	 * Cursor context that is actually interacting with cursor and should
+	 * be notified to the client. E.g. it is cleared when menu is open,
+	 * and the pressed view is set while out-of-surface dragging.
+	 */
+	struct cursor_context notified_ctx = {0};
+	cursor_update_common(server, &ctx, &notified_ctx);
 
-	bool notify = cursor_update_common(server, &ctx,
-		/* cursor_has_moved */ true, sx, sy);
-
-	struct wlr_surface *new_focused_surface =
-		seat->seat->pointer_state.focused_surface;
-
-	if (rc.focus_follow_mouse && new_focused_surface
-			&& old_focused_surface != new_focused_surface) {
+	if (rc.focus_follow_mouse) {
 		/*
-		 * If followMouse=yes, update the keyboard focus when the
-		 * cursor enters a surface
+		 * If followMouse=yes, entering a surface or view updates
+		 * keyboard focus. Note that moving the cursor between a
+		 * surface and a SSD within the same view doesn't update
+		 * keyboard focus, and that entering a surface/view doesn't
+		 * update keyboard focus if implicit grab is active.
 		 */
-		desktop_focus_view_or_surface(seat,
-			view_from_wlr_surface(new_focused_surface),
-			new_focused_surface, rc.raise_on_focus);
+		bool entering = false;
+		if (notified_ctx.view) {
+			entering = notified_ctx.view
+					!= seat->last_cursor_ctx.ctx.view;
+		} else if (notified_ctx.surface) {
+			entering = notified_ctx.surface
+					!= seat->last_cursor_ctx.ctx.surface;
+		}
+		if (entering) {
+			desktop_focus_view_or_surface(seat, notified_ctx.view,
+				notified_ctx.surface, rc.raise_on_focus);
+		}
 	}
+	cursor_context_save(&seat->last_cursor_ctx, &notified_ctx);
 
-	return notify;
+	*sx = notified_ctx.sx;
+	*sy = notified_ctx.sy;
+	return notified_ctx.surface;
 }
 
 static void
@@ -681,8 +716,7 @@ _cursor_update_focus(struct server *server)
 			ctx.surface, rc.raise_on_focus);
 	}
 
-	double sx, sy;
-	cursor_update_common(server, &ctx, /*cursor_has_moved*/ false, &sx, &sy);
+	cursor_update_common(server, &ctx, NULL);
 }
 
 void
@@ -806,10 +840,12 @@ apply_constraint(struct seat *seat, struct wlr_pointer *pointer, double *x, doub
 	if (!seat->server->active_view) {
 		return;
 	}
-	if (!seat->current_constraint || pointer->base.type != WLR_INPUT_DEVICE_POINTER) {
+	if (!seat->current_constraint
+			|| pointer->base.type != WLR_INPUT_DEVICE_POINTER
+			|| seat->current_constraint->type
+				!= WLR_POINTER_CONSTRAINT_V1_CONFINED) {
 		return;
 	}
-	assert(seat->current_constraint->type == WLR_POINTER_CONSTRAINT_V1_CONFINED);
 
 	double sx = seat->cursor->x;
 	double sy = seat->cursor->y;
@@ -832,7 +868,9 @@ cursor_locked(struct seat *seat, struct wlr_pointer *pointer)
 {
 	return seat->current_constraint
 		&& pointer->base.type == WLR_INPUT_DEVICE_POINTER
-		&& seat->current_constraint->type == WLR_POINTER_CONSTRAINT_V1_LOCKED;
+		&& seat->current_constraint->type == WLR_POINTER_CONSTRAINT_V1_LOCKED
+		&& seat->current_constraint->surface
+			== seat->seat->pointer_state.focused_surface;
 }
 
 static void
@@ -887,7 +925,7 @@ handle_motion(struct wl_listener *listener, void *data)
 	cursor_set_visible(seat, /* visible */ true);
 
 	if (seat->cursor_scroll_wheel_emulation) {
-		uint32_t orientation;
+		enum wl_pointer_axis orientation;
 		double delta;
 		if (fabs(event->delta_x) > fabs(event->delta_y)) {
 			orientation = WL_POINTER_AXIS_HORIZONTAL_SCROLL;
@@ -947,11 +985,6 @@ handle_motion_absolute(struct wl_listener *listener, void *data)
 	double dx = lx - seat->cursor->x;
 	double dy = ly - seat->cursor->y;
 
-	wlr_relative_pointer_manager_v1_send_relative_motion(
-		seat->server->relative_pointer_manager,
-		seat->seat, (uint64_t)event->time_msec * 1000,
-		dx, dy, dx, dy);
-
 	preprocess_cursor_motion(seat, event->pointer,
 		event->time_msec, dx, dy);
 }
@@ -960,7 +993,7 @@ static void
 process_release_mousebinding(struct server *server,
 		struct cursor_context *ctx, uint32_t button)
 {
-	if (server->input_mode == LAB_INPUT_STATE_WINDOW_SWITCHER) {
+	if (server->input_mode == LAB_INPUT_STATE_CYCLE) {
 		return;
 	}
 
@@ -968,11 +1001,11 @@ process_release_mousebinding(struct server *server,
 	uint32_t modifiers = keyboard_get_all_modifiers(&server->seat);
 
 	wl_list_for_each(mousebind, &rc.mousebinds, link) {
-		if (ctx->type == LAB_SSD_CLIENT
+		if (ctx->type == LAB_NODE_CLIENT
 				&& view_inhibits_actions(ctx->view, &mousebind->actions)) {
 			continue;
 		}
-		if (ssd_part_contains(mousebind->context, ctx->type)
+		if (node_type_contains(mousebind->context, ctx->type)
 				&& mousebind->button == button
 				&& modifiers == mousebind->modifiers) {
 			switch (mousebind->mouse_event) {
@@ -995,7 +1028,7 @@ static bool
 is_double_click(long double_click_speed, uint32_t button,
 		struct cursor_context *ctx)
 {
-	static enum ssd_part_type last_type;
+	static enum lab_node_type last_type;
 	static uint32_t last_button;
 	static struct view *last_view;
 	static struct timespec last_click;
@@ -1019,7 +1052,7 @@ is_double_click(long double_click_speed, uint32_t button,
 		 */
 		last_button = 0;
 		last_view = NULL;
-		last_type = 0;
+		last_type = LAB_NODE_NONE;
 		return true;
 	}
 	return false;
@@ -1029,7 +1062,7 @@ static bool
 process_press_mousebinding(struct server *server, struct cursor_context *ctx,
 		uint32_t button)
 {
-	if (server->input_mode == LAB_INPUT_STATE_WINDOW_SWITCHER) {
+	if (server->input_mode == LAB_INPUT_STATE_CYCLE) {
 		return false;
 	}
 
@@ -1039,11 +1072,11 @@ process_press_mousebinding(struct server *server, struct cursor_context *ctx,
 	uint32_t modifiers = keyboard_get_all_modifiers(&server->seat);
 
 	wl_list_for_each(mousebind, &rc.mousebinds, link) {
-		if (ctx->type == LAB_SSD_CLIENT
+		if (ctx->type == LAB_NODE_CLIENT
 				&& view_inhibits_actions(ctx->view, &mousebind->actions)) {
 			continue;
 		}
-		if (ssd_part_contains(mousebind->context, ctx->type)
+		if (node_type_contains(mousebind->context, ctx->type)
 				&& mousebind->button == button
 				&& modifiers == mousebind->modifiers) {
 			switch (mousebind->mouse_event) {
@@ -1057,9 +1090,9 @@ process_press_mousebinding(struct server *server, struct cursor_context *ctx,
 				if (!double_click) {
 					/* Swallow the press event */
 					consumed_by_frame_context |=
-						mousebind->context == LAB_SSD_FRAME;
+						mousebind->context == LAB_NODE_FRAME;
 					consumed_by_frame_context |=
-						mousebind->context == LAB_SSD_ALL;
+						mousebind->context == LAB_NODE_ALL;
 					mousebind->pressed_in_context = true;
 				}
 				continue;
@@ -1073,12 +1106,31 @@ process_press_mousebinding(struct server *server, struct cursor_context *ctx,
 			default:
 				continue;
 			}
-			consumed_by_frame_context |= mousebind->context == LAB_SSD_FRAME;
-			consumed_by_frame_context |= mousebind->context == LAB_SSD_ALL;
+			consumed_by_frame_context |= mousebind->context == LAB_NODE_FRAME;
+			consumed_by_frame_context |= mousebind->context == LAB_NODE_ALL;
 			actions_run(ctx->view, server, &mousebind->actions, ctx);
 		}
 	}
 	return consumed_by_frame_context;
+}
+
+static struct wlr_layer_surface_v1 *
+get_root_layer(struct wlr_surface *wlr_surface)
+{
+	assert(wlr_surface);
+	struct wlr_subsurface *subsurface =
+		wlr_subsurface_try_from_wlr_surface(wlr_surface);
+	if (subsurface) {
+		if (subsurface->parent) {
+			return get_root_layer(subsurface->parent);
+		} else {
+			/* never reached? */
+			wlr_log(WLR_ERROR, "subsurface without parent");
+			return NULL;
+		}
+	} else {
+		return wlr_layer_surface_v1_try_from_wlr_surface(wlr_surface);
+	}
 }
 
 static uint32_t press_msec;
@@ -1094,7 +1146,7 @@ cursor_process_button_press(struct seat *seat, uint32_t button, uint32_t time_ms
 
 	if (ctx.view || ctx.surface) {
 		/* Store cursor context for later action processing */
-		seat_set_pressed(seat, &ctx);
+		cursor_context_save(&seat->pressed, &ctx);
 	}
 
 	if (server->input_mode == LAB_INPUT_STATE_MENU) {
@@ -1112,28 +1164,20 @@ cursor_process_button_press(struct seat *seat, uint32_t button, uint32_t time_ms
 	 * Action processing does not run for these surfaces and thus
 	 * the Focus action (used for normal views) does not work.
 	 */
-	if (ctx.type == LAB_SSD_LAYER_SURFACE) {
-		wlr_log(WLR_DEBUG, "press on layer-surface");
-		struct wlr_layer_surface_v1 *layer =
-			wlr_layer_surface_v1_try_from_wlr_surface(ctx.surface);
-		if (layer && layer->current.keyboard_interactive) {
-			layer_try_set_focus(seat, layer);
-		}
-	} else if (ctx.type == LAB_SSD_LAYER_SUBSURFACE) {
-		wlr_log(WLR_DEBUG, "press on layer-subsurface");
-		struct wlr_layer_surface_v1 *layer =
-			subsurface_parent_layer(ctx.surface);
+	if (ctx.type == LAB_NODE_LAYER_SURFACE) {
+		wlr_log(WLR_DEBUG, "press on layer-(sub)surface");
+		struct wlr_layer_surface_v1 *layer = get_root_layer(ctx.surface);
 		if (layer && layer->current.keyboard_interactive) {
 			layer_try_set_focus(seat, layer);
 		}
 #ifdef HAVE_XWAYLAND
-	} else if (ctx.type == LAB_SSD_UNMANAGED) {
+	} else if (ctx.type == LAB_NODE_UNMANAGED) {
 		desktop_focus_view_or_surface(seat, NULL, ctx.surface,
 			/*raise*/ false);
 #endif
 	}
 
-	if (ctx.type != LAB_SSD_CLIENT && ctx.type != LAB_SSD_LAYER_SUBSURFACE
+	if (ctx.type != LAB_NODE_CLIENT && ctx.type != LAB_NODE_LAYER_SURFACE
 			&& wlr_seat_pointer_has_grab(seat->seat)) {
 		/*
 		 * If we have an active popup grab (an open popup) we want to
@@ -1167,22 +1211,28 @@ cursor_process_button_release(struct seat *seat, uint32_t button,
 {
 	struct server *server = seat->server;
 	struct cursor_context ctx = get_cursor_context(server);
-	struct wlr_surface *pressed_surface = seat->pressed.surface;
+	struct wlr_surface *pressed_surface = seat->pressed.ctx.surface;
 
 	/* Always notify button release event when it's not bound */
 	const bool notify = !lab_set_contains(&seat->bound_buttons, button);
 
-	seat_reset_pressed(seat);
+	cursor_context_save(&seat->pressed, NULL);
 
 	if (server->input_mode == LAB_INPUT_STATE_MENU) {
 		/* TODO: take into account overflow of time_msec */
 		if (time_msec - press_msec > rc.menu_ignore_button_release_period) {
-			if (ctx.type == LAB_SSD_MENU) {
+			if (ctx.type == LAB_NODE_MENUITEM) {
 				menu_call_selected_actions(server);
 			} else {
 				menu_close_root(server);
 				cursor_update_focus(server);
 			}
+		}
+		return notify;
+	}
+	if (server->input_mode == LAB_INPUT_STATE_CYCLE) {
+		if (ctx.type == LAB_NODE_CYCLE_OSD_ITEM) {
+			cycle_on_cursor_release(server, ctx.node);
 		}
 		return notify;
 	}
@@ -1342,19 +1392,20 @@ process_cursor_axis(struct server *server, enum wl_pointer_axis orientation,
 		wlr_log(WLR_DEBUG, "Failed to handle cursor axis event");
 	}
 
-	bool handled = false;
+	bool consumed = false;
 	if (direction != LAB_DIRECTION_INVALID) {
 		struct mousebind *mousebind;
 		wl_list_for_each(mousebind, &rc.mousebinds, link) {
-			if (ctx.type == LAB_SSD_CLIENT
+			if (ctx.type == LAB_NODE_CLIENT
 					&& view_inhibits_actions(ctx.view, &mousebind->actions)) {
 				continue;
 			}
-			if (ssd_part_contains(mousebind->context, ctx.type)
+			if (node_type_contains(mousebind->context, ctx.type)
 					&& mousebind->direction == direction
 					&& modifiers == mousebind->modifiers
 					&& mousebind->mouse_event == MOUSE_ACTION_SCROLL) {
-				handled = true;
+				consumed |= mousebind->context == LAB_NODE_FRAME;
+				consumed |= mousebind->context == LAB_NODE_ALL;
 				/*
 				 * Action may not be executed if the accumulated scroll delta
 				 * on touchpads or hi-res mice doesn't exceed the threshold
@@ -1367,10 +1418,9 @@ process_cursor_axis(struct server *server, enum wl_pointer_axis orientation,
 	}
 
 	/* Bindings swallow mouse events if activated */
-	if (ctx.surface && !handled) {
+	if (ctx.surface && !consumed) {
 		/* Make sure we are sending the events to the surface under the cursor */
-		double sx, sy;
-		cursor_update_common(server, &ctx, /*cursor_has_moved*/ false, &sx, &sy);
+		cursor_update_common(server, &ctx, NULL);
 
 		return true;
 	}

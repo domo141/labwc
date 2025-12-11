@@ -14,13 +14,13 @@ _labnag_ [options...]
 	Create a button with the text _text_ that optionally executes _action_
 	when pressed. Multiple buttons can be defined by providing the flag
 	multiple times. Buttons will appear in the order they are provided from
-	lef to right.
+	left to right.
 
 *-Z, --button-dismiss* <text> [<action>]
 	Create a button with the text _text_ that optionally executes _action_
 	when pressed, and dismisses labnag. Multiple buttons can be defined by
 	providing the flag multiple times. Buttons will appear in the order
-	they are provided from lef to right.
+	they are provided from left to right.
 
 *-d, --debug*
 	Enable debugging.
@@ -30,6 +30,9 @@ _labnag_ [options...]
 
 *-y, --layer* overlay|top|bottom|background
 	Set the layer to use.
+
+*-k, --keyboard-focus none|exclusive|on-demand*
+	Set the policy for keyboard focus.
 
 *-f, --font* <font>
 	Set the font to use.
@@ -62,22 +65,22 @@ _labnag_ [options...]
 
 # APPEARANCE OPTIONS
 
-*--background* <RRGGBB[AA]>
+*--background-color* <RRGGBB[AA]>
 	Set the color of the background.
 
-*--border* <RRGGBB[AA]>
-	Set the color of the border.
+*--button-border-color* <RRGGBB[AA]>
+	Set the color of the button border.
 
-*--border-bottom* <RRGGBB[AA]>
+*--border-bottom-color* <RRGGBB[AA]>
 	Set the color of the bottom border.
 
-*--button-background* <RRGGBB[AA]>
+*--button-background-color* <RRGGBB[AA]>
 	Set the color for the background for buttons.
 
-*--text* <RRGGBB[AA]>
+*--text-color* <RRGGBB[AA]>
 	Set the text color.
 
-*--button-text* <RRGGBB[AA]>
+*--button-text-color* <RRGGBB[AA]>
 	Set the button text color.
 
 *--border-bottom-size* <size>
@@ -86,7 +89,7 @@ _labnag_ [options...]
 *--message-padding* <padding>
 	Set the padding for the message.
 
-*--details-background* <RRGGBB[AA]>
+*--details-background-color* <RRGGBB[AA]>
 	Set the color for the background for details.
 
 *--details-border-size* <size>
@@ -106,4 +109,35 @@ _labnag_ [options...]
 
 *--button-padding* <padding>
 	Set the padding for the button text.
+
+# EXAMPLE
+
+This is a simple example of a _labnag_ logout GUI.
+
+```
+#!/bin/sh
+
+# logout with labnag
+
+labnag \\
+ -f "Hack Regular 10"\\
+ -m "Choose your logout option"\\
+ -Z "  Lock   " "gtklock -d"\\
+ -Z " Logout  " "labwc -e"\\
+ -Z "Shutdown " "systemctl poweroff"\\
+ -Z " Reboot  " "systemctl reboot"\\
+ -Z "Hibernate" "systemctl hibernate"\\
+ -Z " Suspend " "systemctl suspend"\\
+ -Z " Cancel  "\\
+ --background-color 00ffff\\
+ --button-background-color 00ffff\\
+ --button-border-color 00ccccaa\\
+ --text-color 000000\\
+ --button-text-color 000000\\
+ --button-gap 8\\
+ --button-margin-right 0\\
+ --button-padding 5\\
+ --button-border-size 2\\
+ -t 60
+```
 

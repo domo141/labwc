@@ -3,8 +3,7 @@
 #define LABWC_TABLET_H
 
 #include <wayland-server-core.h>
-#include <wlr/types/wlr_tablet_v2.h>
-#include "config/tablet-tool.h"
+#include "config/types.h"
 
 struct seat;
 struct wlr_device;
@@ -21,7 +20,7 @@ struct drawing_tablet_tool {
 	 */
 	bool force_mouse_emulation;
 
-	enum motion motion_mode;
+	enum lab_motion motion_mode;
 	double x, y, dx, dy;
 	double distance;
 	double pressure;

@@ -6,7 +6,7 @@
 
 struct wlr_scene_tree;
 struct wlr_scene_buffer;
-struct scaled_scene_buffer;
+struct scaled_buffer;
 
 struct scaled_font_buffer {
 	struct wlr_scene_buffer *scene_buffer;
@@ -19,7 +19,7 @@ struct scaled_font_buffer {
 	float color[4];
 	float bg_color[4];
 	struct font font;
-	struct scaled_scene_buffer *scaled_buffer;
+	struct scaled_buffer *scaled_buffer;
 
 	/*
 	 * The following fields are used only for the titlebar, where
@@ -34,7 +34,7 @@ struct scaled_font_buffer {
 
 /**
  * Create an auto scaling font buffer, providing a wlr_scene_buffer node for
- * display. It gets destroyed automatically when the backing scaled_scene_buffer
+ * display. It gets destroyed automatically when the backing scaled_buffer
  * is being destroyed which in turn happens automatically when the backing
  * wlr_scene_buffer (or one of its parents) is being destroyed.
  *
@@ -72,13 +72,5 @@ scaled_font_buffer_create_for_titlebar(struct wlr_scene_tree *parent,
 void scaled_font_buffer_update(struct scaled_font_buffer *self, const char *text,
 	int max_width, struct font *font, const float *color,
 	const float *bg_color);
-
-/**
- * Update the max width of an existing auto scaling font buffer
- * and force a new render.
- *
- * No steps are taken to detect if its actually required to render a new buffer.
- */
-void scaled_font_buffer_set_max_width(struct scaled_font_buffer *self, int max_width);
 
 #endif /* LABWC_SCALED_FONT_BUFFER_H */

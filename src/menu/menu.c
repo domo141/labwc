@@ -3,14 +3,13 @@
 #include "menu/menu.h"
 #include <assert.h>
 #include <libxml/parser.h>
-#include <libxml/tree.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
 #include <unistd.h>
-#include <wayland-server-core.h>
+#include <wlr/types/wlr_scene.h>
 #include <wlr/types/wlr_xdg_shell.h>
 #include <wlr/util/log.h>
 #include "action.h"
@@ -20,18 +19,19 @@
 #include "common/lab-scene-rect.h"
 #include "common/list.h"
 #include "common/mem.h"
-#include "common/scaled-font-buffer.h"
-#include "common/scaled-icon-buffer.h"
-#include "common/scene-helpers.h"
 #include "common/spawn.h"
 #include "common/string-helpers.h"
 #include "common/xml.h"
+#include "config/rcxml.h"
 #include "labwc.h"
-#include "output.h"
-#include "workspaces.h"
-#include "view.h"
 #include "node.h"
+#include "output.h"
+#include "scaled-buffer/scaled-font-buffer.h"
+#include "scaled-buffer/scaled-icon-buffer.h"
 #include "theme.h"
+#include "translate.h"
+#include "view.h"
+#include "workspaces.h"
 
 #define PIPEMENU_MAX_BUF_SIZE 1048576  /* 1 MiB */
 #define PIPEMENU_TIMEOUT_IN_MS 4000    /* 4 seconds */
@@ -136,6 +136,7 @@ item_create(struct menu *menu, const char *text, const char *icon_name, bool sho
 	assert(menu);
 	assert(text);
 
+	struct theme *theme = menu->server->theme;
 	struct menuitem *menuitem = znew(*menuitem);
 	menuitem->parent = menu;
 	menuitem->selectable = true;
@@ -152,7 +153,8 @@ item_create(struct menu *menu, const char *text, const char *icon_name, bool sho
 
 	menuitem->native_width = font_width(&rc.font_menuitem, text);
 	if (menuitem->arrow) {
-		menuitem->native_width += font_width(&rc.font_menuitem, menuitem->arrow);
+		menuitem->native_width += font_width(&rc.font_menuitem, menuitem->arrow)
+					+ theme->menu_items_padding_x;
 	}
 
 	wl_list_append(&menu->menuitems, &menuitem->link);
@@ -178,7 +180,7 @@ item_create_scene_for_state(struct menuitem *item, float *text_color,
 
 	int bg_width = menu->size.width - 2 * theme->menu_border_width;
 	int arrow_width = item->arrow ?
-		font_width(&rc.font_menuitem, item->arrow) : 0;
+		font_width(&rc.font_menuitem, item->arrow) + theme->menu_items_padding_x : 0;
 	int label_max_width = bg_width - 2 * theme->menu_items_padding_x
 		- arrow_width - icon_width;
 
@@ -228,7 +230,7 @@ item_create_scene_for_state(struct menuitem *item, float *text_color,
 	scaled_font_buffer_update(arrow_buffer, item->arrow, -1,
 		&rc.font_menuitem, text_color, bg_color);
 	/* Vertically center and right-align arrow */
-	x += label_max_width;
+	x += label_max_width + theme->menu_items_padding_x;
 	y = (theme->menu_item_height - label_buffer->height) / 2;
 	wlr_scene_node_set_position(&arrow_buffer->scene_buffer->node, x, y);
 
@@ -245,8 +247,8 @@ item_create_scene(struct menuitem *menuitem, int *item_y)
 
 	/* Menu item root node */
 	menuitem->tree = wlr_scene_tree_create(menu->scene_tree);
-	node_descriptor_create(&menuitem->tree->node,
-		LAB_NODE_DESC_MENUITEM, menuitem);
+	node_descriptor_create(&menuitem->tree->node, LAB_NODE_MENUITEM,
+		/*view*/ NULL, menuitem);
 
 	/* Create scenes for unselected/selected states */
 	menuitem->normal_tree = item_create_scene_for_state(menuitem,
@@ -294,8 +296,8 @@ separator_create_scene(struct menuitem *menuitem, int *item_y)
 
 	/* Menu item root node */
 	menuitem->tree = wlr_scene_tree_create(menu->scene_tree);
-	node_descriptor_create(&menuitem->tree->node,
-		LAB_NODE_DESC_MENUITEM, menuitem);
+	node_descriptor_create(&menuitem->tree->node, LAB_NODE_MENUITEM,
+		/*view*/ NULL, menuitem);
 
 	/* Tree to hold background and line buffer */
 	menuitem->normal_tree = wlr_scene_tree_create(menuitem->tree);
@@ -342,8 +344,8 @@ title_create_scene(struct menuitem *menuitem, int *item_y)
 
 	/* Menu item root node */
 	menuitem->tree = wlr_scene_tree_create(menu->scene_tree);
-	node_descriptor_create(&menuitem->tree->node,
-		LAB_NODE_DESC_MENUITEM, menuitem);
+	node_descriptor_create(&menuitem->tree->node, LAB_NODE_MENUITEM,
+		/*view*/ NULL, menuitem);
 
 	/* Tree to hold background and text buffer */
 	menuitem->normal_tree = wlr_scene_tree_create(menuitem->tree);
@@ -480,13 +482,13 @@ fill_item(struct menu *menu, xmlNode *node)
 		goto out;
 	}
 
-	struct menuitem *item = item_create(menu, (char *)label, icon_name, false);
+	struct menuitem *item = item_create(menu, label, icon_name, false);
 	lab_xml_expand_dotted_attributes(node);
 	append_parsed_actions(node, &item->actions);
 
 out:
-	free(label);
-	free(icon_name);
+	xmlFree(label);
+	xmlFree(icon_name);
 }
 
 static void
@@ -617,10 +619,10 @@ fill_menu(struct server *server, struct menu *parent, xmlNode *n)
 		item->submenu = menu;
 	}
 error:
-	free(label);
-	free(icon_name);
-	free(execute);
-	free(id);
+	xmlFree(label);
+	xmlFree(icon_name);
+	xmlFree(execute);
+	xmlFree(id);
 }
 
 /* This can be one of <separator> and <separator label=""> */
@@ -629,7 +631,7 @@ fill_separator(struct menu *menu, xmlNode *n)
 {
 	char *label = (char *)xmlGetProp(n, (const xmlChar *)"label");
 	separator_create(menu, label);
-	free(label);
+	xmlFree(label);
 }
 
 /* parent==NULL when processing toplevel menus in menu.xml */
@@ -677,30 +679,6 @@ parse_buf(struct server *server, struct menu *parent, struct buf *buf)
 	return true;
 }
 
-/*
- * @stream can come from either of the following:
- *   - fopen() in the case of reading a file such as menu.xml
- *   - popen() when processing pipemenus
- */
-static void
-parse_stream(struct server *server, FILE *stream)
-{
-	char *line = NULL;
-	size_t len = 0;
-	struct buf b = BUF_INIT;
-
-	while (getline(&line, &len, stream) != -1) {
-		char *p = strrchr(line, '\n');
-		if (p) {
-			*p = '\0';
-		}
-		buf_add(&b, line);
-	}
-	free(line);
-	parse_buf(server, NULL, &b);
-	buf_reset(&b);
-}
-
 static void
 parse_xml(const char *filename, struct server *server)
 {
@@ -713,13 +691,13 @@ parse_xml(const char *filename, struct server *server)
 
 	for (struct wl_list *elm = iter(&paths); elm != &paths; elm = iter(elm)) {
 		struct path *path = wl_container_of(elm, path, link);
-		FILE *stream = fopen(path->string, "r");
-		if (!stream) {
+		struct buf buf = buf_from_file(path->string);
+		if (!buf.len) {
 			continue;
 		}
 		wlr_log(WLR_INFO, "read menu file %s", path->string);
-		parse_stream(server, stream);
-		fclose(stream);
+		parse_buf(server, /*parent*/ NULL, &buf);
+		buf_reset(&buf);
 		if (!should_merge_config) {
 			break;
 		}
@@ -898,16 +876,19 @@ update_client_list_combined_menu(struct server *server)
 
 		wl_list_for_each(view, &server->views, link) {
 			if (view->workspace == workspace) {
-				const char *title = view_get_string_prop(view, "title");
-				if (!view->foreign_toplevel || string_null_or_empty(title)) {
+				if (!view->foreign_toplevel
+						|| string_null_or_empty(view->title)) {
 					continue;
 				}
 
 				if (view == server->active_view) {
 					buf_add(&buffer, "*");
 				}
-				buf_add(&buffer, title);
-
+				if (view->minimized) {
+					buf_add_fmt(&buffer, "(%s)", view->title);
+				} else {
+					buf_add(&buffer, view->title);
+				}
 				item = item_create(menu, buffer.data, NULL,
 					/*show arrow*/ false);
 				item->client_list_view = view;
@@ -1538,15 +1519,6 @@ menu_process_cursor_motion(struct wlr_scene_node *node)
 	assert(node && node->data);
 	struct menuitem *item = node_menuitem_from_node(node);
 	menu_process_item_selection(item);
-}
-
-bool
-menu_call_actions(struct wlr_scene_node *node)
-{
-	assert(node && node->data);
-	struct menuitem *item = node_menuitem_from_node(node);
-
-	return menu_execute_item(item);
 }
 
 void

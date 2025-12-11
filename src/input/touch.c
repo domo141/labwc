@@ -1,17 +1,22 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #include "input/touch.h"
 #include <wayland-util.h>
+#include <wlr/types/wlr_cursor.h>
 #include <wlr/types/wlr_scene.h>
 #include <wlr/types/wlr_seat.h>
 #include <wlr/types/wlr_touch.h>
 #include <linux/input-event-codes.h>
+#include "action.h"
 #include "common/macros.h"
 #include "common/mem.h"
 #include "common/scene-helpers.h"
+#include "config/mousebind.h"
+#include "config/rcxml.h"
+#include "config/touch.h"
 #include "idle.h"
 #include "labwc.h"
-#include "config/mousebind.h"
-#include "action.h"
+#include "ssd.h"
+#include "view.h"
 
 /* Holds layout -> surface offsets to report motion events in relative coords */
 struct touch_point {
@@ -163,7 +168,7 @@ handle_touch_down(struct wl_listener *listener, void *data)
 		wl_list_for_each(mousebind, &rc.mousebinds, link) {
 			if (mousebind->mouse_event == MOUSE_ACTION_PRESS
 					&& mousebind->button == BTN_LEFT
-					&& mousebind->context == LAB_SSD_CLIENT) {
+					&& mousebind->context == LAB_NODE_CLIENT) {
 				actions_run(view, seat->server, &mousebind->actions, NULL);
 			}
 		}
@@ -202,7 +207,7 @@ handle_touch_up(struct wl_listener *listener, void *data)
 			} else {
 				cursor_emulate_button(seat, BTN_LEFT,
 					WL_POINTER_BUTTON_STATE_RELEASED, event->time_msec);
-				ssd_update_button_hover(NULL, seat->server->ssd_hover_state);
+				ssd_update_hovered_button(seat->server, NULL);
 			}
 			wl_list_remove(&touch_point->link);
 			zfree(touch_point);

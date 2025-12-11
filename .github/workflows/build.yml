@@ -17,6 +17,8 @@ on:
       - 'src/**'
       - 'include/**'
       - 'protocols/**'
+      - 'clients/**'
+      - 't/**'
       - 'scripts/**'
       - '.github/workflows/**'
 
@@ -82,7 +84,7 @@ jobs:
           pacman -Syu --noconfirm
           pacman -S --noconfirm git meson clang wlroots0.19 libdrm libinput \
             wayland-protocols cairo pango libxml2 xorg-xwayland librsvg \
-            libdisplay-info gdb ttf-dejavu foot libsfdo
+            libdisplay-info gdb ttf-dejavu foot libsfdo cmocka
 
       - name: Install Debian Testing dependencies
         if: matrix.name == 'Debian'
@@ -92,7 +94,7 @@ jobs:
           apt-get upgrade -y
           apt-get install -y git gcc clang gdb xwayland
           apt-get build-dep -y labwc
-          apt-get build-dep -y libwlroots-0.18-dev
+          apt-get build-dep -y libwlroots-0.19-dev
 
       - name: Install FreeBSD dependencies
         if: matrix.name == 'FreeBSD'
@@ -102,7 +104,7 @@ jobs:
           prepare: |
             sed -i '' 's/quarterly/latest/' /etc/pkg/FreeBSD.conf
             pkg set -yn pkg:mesa-dri # hack to skip llvm dependency
-            pkg install -y git meson gcc pkgconf cairo pango evdev-proto \
+            pkg install -y git pcre2 meson gcc pkgconf cairo pango evdev-proto \
               hwdata wayland-protocols libdisplay-info libepoll-shim \
               wlroots019
           run: echo "setup done"
@@ -168,6 +170,7 @@ jobs:
             meson setup build-gcc-release -Dxwayland=enabled \
               -Dbuildtype=release -Db_ndebug=true --werror
             meson configure build-gcc-release -Dwlroots:b_ndebug=false || true
+            meson configure build-gcc-release -Dlibsfdo:b_ndebug=false || true
             meson compile -C build-gcc-release
           ' | $TARGET
 
@@ -190,6 +193,7 @@ jobs:
             meson setup build-clang-release -Dxwayland=enabled \
               -Dbuildtype=release -Db_ndebug=true --werror
             meson configure build-clang-release -Dwlroots:b_ndebug=false || true
+            meson configure build-clang-release -Dlibsfdo:b_ndebug=false || true
             meson compile -C build-clang-release
           ' | $TARGET
 
@@ -203,6 +207,18 @@ jobs:
             meson setup build-gcc-no-feature -Dxwayland=disabled \
               -Dicon=disabled -Dsvg=disabled --werror
             meson compile -C build-gcc-no-feature
+          ' | $TARGET
+
+      # Unit tests, run on Arch only
+      - name: Build with gcc - unit test
+        if: matrix.name == 'Arch'
+        run: |
+          echo '
+            cd "$GITHUB_WORKSPACE"
+            export CC=gcc
+            meson setup build-gcc-unit-test -Dtest=enabled --werror
+            meson compile -C build-gcc-unit-test
+            meson test -C build-gcc-unit-test --print-errorlogs
           ' | $TARGET
 
       # Runtime tests, these run on Arch and Void only (the later due to libmusl being used)

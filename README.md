@@ -101,20 +101,7 @@ spend our effort.
 
 A lot of emphasis is put on code simplicity when considering features.
 
-The main development effort is focused on producing a solid foundation for a
-stacking compositor rather than adding configuration and theming options.
-
 See [scope] for full details on implemented features.
-
-High-level summary of items that Labwc supports:
-
-- [x] Config files (rc.xml, autostart, shutdown, environment, menu.xml)
-- [x] Theme files and xbm/png/svg icons
-- [x] Basic desktop and client menus
-- [x] HiDPI
-- [x] wlroots protocols such as `output-management`, `layer-shell` and
-  `foreign-toplevel`
-- [x] Optionally xwayland
 
 ### 1.5 Videos
 
@@ -249,7 +236,7 @@ Suggested apps to use with Labwc:
 - Screen shooter: [grim]
 - Screen recorder: [wf-recorder]
 - Background image: [swaybg]
-- Panel: [waybar], [yambar], [lavalauncher], [sfwbar], [xfce4-panel]
+- Panel: [waybar], [lavalauncher], [sfwbar], [xfce4-panel]
 - Launchers: [bemenu], [fuzzel], [wofi]
 - Output managers: [wlopm], [kanshi], [wlr-randr]
 - Screen locker: [swaylock]
@@ -292,7 +279,6 @@ The default window bar menu can be translated on the [weblate platform](https://
 [wf-recorder]: https://github.com/ammen99/wf-recorder
 [swaybg]: https://github.com/swaywm/swaybg
 [waybar]: https://github.com/Alexays/Waybar
-[yambar]: https://codeberg.org/dnkl/yambar
 [lavalauncher]: https://sr.ht/~leon_plickat/LavaLauncher
 [sfwbar]: https://github.com/LBCrion/sfwbar
 [xfce4-panel]: https://gitlab.xfce.org/xfce/xfce4-panel

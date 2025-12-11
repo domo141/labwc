@@ -1,22 +1,22 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #include "config.h"
 #include <assert.h>
+#include <wlr/types/wlr_cursor.h>
+#include <wlr/types/wlr_layer_shell_v1.h>
+#include <wlr/types/wlr_output_layout.h>
+#include <wlr/types/wlr_scene.h>
 #include <wlr/types/wlr_seat.h>
 #include <wlr/types/wlr_subcompositor.h>
 #include <wlr/types/wlr_xdg_shell.h>
 #include "common/scene-helpers.h"
-#include "common/surface-helpers.h"
 #include "dnd.h"
 #include "labwc.h"
 #include "layers.h"
 #include "node.h"
-#include "osd.h"
 #include "output.h"
 #include "ssd.h"
 #include "view.h"
-#include "window-rules.h"
 #include "workspaces.h"
-#include "xwayland.h"
 
 #if HAVE_XWAYLAND
 #include <wlr/xwayland.h>
@@ -74,7 +74,7 @@ desktop_focus_view(struct view *view, bool raise)
 		return;
 	}
 
-	if (view->server->input_mode == LAB_INPUT_STATE_WINDOW_SWITCHER) {
+	if (view->server->input_mode == LAB_INPUT_STATE_CYCLE) {
 		wlr_log(WLR_DEBUG, "not focusing window while window switching");
 		return;
 	}
@@ -132,7 +132,7 @@ desktop_focus_view_or_surface(struct seat *seat, struct view *view,
 	}
 }
 
-struct view *
+static struct view *
 desktop_topmost_focusable_view(struct server *server)
 {
 	struct view *view;
@@ -145,7 +145,7 @@ desktop_topmost_focusable_view(struct server *server)
 			continue;
 		}
 		view = node_view_from_node(node);
-		if (view->mapped && view_is_focusable(view)) {
+		if (view_is_focusable(view) && !view->minimized) {
 			return view;
 		}
 	}
@@ -242,28 +242,44 @@ desktop_update_top_layer_visibility(struct server *server)
 	}
 }
 
-static struct wlr_surface *
-get_surface_from_layer_node(struct wlr_scene_node *node)
+/*
+ * Work around rounding issues in some clients (notably Qt apps) where
+ * cursor coordinates in the rightmost or bottom pixel are incorrectly
+ * rounded up, putting them outside the surface bounds. The effect is
+ * especially noticeable in right/bottom desktop panels, since driving
+ * the cursor to the edge of the screen no longer works.
+ *
+ * Under X11, such rounding issues went unnoticed since cursor positions
+ * were always integers (i.e. whole pixel boundaries) anyway. Until more
+ * clients/toolkits are fractional-pixel clean, limit surface cursor
+ * coordinates to (w - 1, h - 1) as a workaround.
+ */
+static void
+avoid_edge_rounding_issues(struct cursor_context *ctx)
 {
-	assert(node->data);
-	struct node_descriptor *desc = (struct node_descriptor *)node->data;
-	if (desc->type == LAB_NODE_DESC_LAYER_SURFACE) {
-		struct lab_layer_surface *surface;
-		surface = node_layer_surface_from_node(node);
-		return surface->scene_layer_surface->layer_surface->surface;
-	} else if (desc->type == LAB_NODE_DESC_LAYER_POPUP) {
-		struct lab_layer_popup *popup;
-		popup = node_layer_popup_from_node(node);
-		return popup->wlr_popup->base->surface;
+	if (!ctx->surface) {
+		return;
 	}
-	return NULL;
+
+	int w = ctx->surface->current.width;
+	int h = ctx->surface->current.height;
+	/*
+	 * The cursor isn't expected to be outside the surface bounds
+	 * here, but check (sx < w, sy < h) just in case.
+	 */
+	if (ctx->sx > w - 1 && ctx->sx < w) {
+		ctx->sx = w - 1;
+	}
+	if (ctx->sy > h - 1 && ctx->sy < h) {
+		ctx->sy = h - 1;
+	}
 }
 
 /* TODO: make this less big and scary */
 struct cursor_context
 get_cursor_context(struct server *server)
 {
-	struct cursor_context ret = {.type = LAB_SSD_NONE};
+	struct cursor_context ret = {.type = LAB_NODE_NONE};
 	struct wlr_cursor *cursor = server->seat.cursor;
 
 	/* Prevent drag icons to be on top of the hitbox detection */
@@ -279,18 +295,20 @@ get_cursor_context(struct server *server)
 		dnd_icons_show(&server->seat, true);
 	}
 
-	ret.node = node;
 	if (!node) {
-		ret.type = LAB_SSD_ROOT;
+		ret.type = LAB_NODE_ROOT;
 		return ret;
 	}
+	ret.node = node;
+	ret.surface = lab_wlr_surface_from_node(node);
+
+	avoid_edge_rounding_issues(&ret);
 
 #if HAVE_XWAYLAND
+	/* TODO: attach LAB_NODE_UNMANAGED node-descriptor to unmanaged surfaces */
 	if (node->type == WLR_SCENE_NODE_BUFFER) {
-		struct wlr_surface *surface = lab_wlr_surface_from_node(node);
 		if (node->parent == server->unmanaged_tree) {
-			ret.type = LAB_SSD_UNMANAGED;
-			ret.surface = surface;
+			ret.type = LAB_NODE_UNMANAGED;
 			return ret;
 		}
 	}
@@ -299,74 +317,75 @@ get_cursor_context(struct server *server)
 		struct node_descriptor *desc = node->data;
 		if (desc) {
 			switch (desc->type) {
-			case LAB_NODE_DESC_VIEW:
-			case LAB_NODE_DESC_XDG_POPUP:
-				ret.view = desc->data;
-				ret.type = ssd_get_part_type(
-					ret.view->ssd, ret.node, cursor);
-				if (ret.type == LAB_SSD_CLIENT) {
-					ret.surface = lab_wlr_surface_from_node(ret.node);
+			case LAB_NODE_VIEW:
+			case LAB_NODE_XDG_POPUP:
+				ret.view = desc->view;
+				if (ret.surface) {
+					ret.type = LAB_NODE_CLIENT;
+				} else {
+					/* e.g. when cursor is on resize-indicator */
+					ret.type = LAB_NODE_NONE;
 				}
 				return ret;
-			case LAB_NODE_DESC_SSD_BUTTON: {
-				/*
-				 * Always return the top scene node for SSD
-				 * buttons
-				 */
-				struct ssd_button *button =
-					node_ssd_button_from_node(node);
-				ret.node = node;
-				ret.type = ssd_button_get_type(button);
-				ret.view = ssd_button_get_view(button);
+			case LAB_NODE_LAYER_SURFACE:
+				ret.type = LAB_NODE_LAYER_SURFACE;
 				return ret;
-			}
-			case LAB_NODE_DESC_LAYER_SURFACE:
-				ret.node = node;
-				ret.type = LAB_SSD_LAYER_SURFACE;
-				ret.surface = get_surface_from_layer_node(node);
+			case LAB_NODE_LAYER_POPUP:
+			case LAB_NODE_SESSION_LOCK_SURFACE:
+			case LAB_NODE_IME_POPUP:
+				ret.type = LAB_NODE_CLIENT;
 				return ret;
-			case LAB_NODE_DESC_LAYER_POPUP:
-				ret.node = node;
-				ret.type = LAB_SSD_CLIENT;
-				ret.surface = get_surface_from_layer_node(node);
-				return ret;
-			case LAB_NODE_DESC_SESSION_LOCK_SURFACE: /* fallthrough */
-			case LAB_NODE_DESC_IME_POPUP:
-				ret.type = LAB_SSD_CLIENT;
-				ret.surface = lab_wlr_surface_from_node(ret.node);
-				return ret;
-			case LAB_NODE_DESC_MENUITEM:
+			case LAB_NODE_MENUITEM:
 				/* Always return the top scene node for menu items */
 				ret.node = node;
-				ret.type = LAB_SSD_MENU;
+				ret.type = LAB_NODE_MENUITEM;
 				return ret;
-			case LAB_NODE_DESC_NODE:
-			case LAB_NODE_DESC_TREE:
-			case LAB_NODE_DESC_SCALED_SCENE_BUFFER:
+			case LAB_NODE_CYCLE_OSD_ITEM:
+				/* Always return the top scene node for osd items */
+				ret.node = node;
+				ret.type = LAB_NODE_CYCLE_OSD_ITEM;
+				return ret;
+			case LAB_NODE_BUTTON_FIRST...LAB_NODE_BUTTON_LAST:
+			case LAB_NODE_SSD_ROOT:
+			case LAB_NODE_TITLE:
+			case LAB_NODE_TITLEBAR:
+				/* Always return the top scene node for ssd parts */
+				ret.node = node;
+				ret.view = desc->view;
+				/*
+				 * A node_descriptor attached to a ssd part
+				 * must have an associated view.
+				 */
+				assert(ret.view);
+
+				/*
+				 * When cursor is on the ssd border or extents,
+				 * desc->type is usually LAB_NODE_SSD_ROOT.
+				 * But desc->type can also be LAB_NODE_TITLEBAR
+				 * when cursor is on the curved border at the
+				 * titlebar.
+				 *
+				 * ssd_get_resizing_type() overwrites both of
+				 * them with LAB_NODE_{BORDER,CORNER}_* node
+				 * types, which are mapped to mouse contexts
+				 * like Left and TLCorner.
+				 */
+				ret.type = ssd_get_resizing_type(ret.view->ssd, cursor);
+				if (ret.type == LAB_NODE_NONE) {
+					/*
+					 * If cursor is not on border/extents,
+					 * just use desc->type which should be
+					 * mapped to mouse contexts like Title,
+					 * Titlebar and Iconify.
+					 */
+					ret.type = desc->type;
+				}
+
+				return ret;
+			default:
+				/* Other node types are not attached a scene node */
+				wlr_log(WLR_ERROR, "unexpected node type: %d", desc->type);
 				break;
-			}
-		}
-
-		/* Edge-case nodes without node-descriptors */
-		if (node->type == WLR_SCENE_NODE_BUFFER) {
-			struct wlr_surface *surface = lab_wlr_surface_from_node(node);
-
-			/*
-			 * Handle layer-shell subsurfaces
-			 *
-			 * These don't have node-descriptors, but need to be
-			 * able to receive pointer actions so we have to process
-			 * them here.
-			 *
-			 * Test by running `gtk-layer-demo -k exclusive`, then
-			 * open the 'set margin' dialog and try setting the
-			 * margin with the pointer.
-			 */
-			if (surface && wlr_subsurface_try_from_wlr_surface(surface)
-					&& subsurface_parent_layer(surface)) {
-				ret.surface = surface;
-				ret.type = LAB_SSD_LAYER_SUBSURFACE;
-				return ret;
 			}
 		}
 

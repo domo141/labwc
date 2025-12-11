@@ -7,6 +7,7 @@
  *	- keeping non-layer-shell xdg-popups outside the layers.c code
  */
 
+#include <wlr/types/wlr_scene.h>
 #include <wlr/types/wlr_xdg_shell.h>
 #include "common/macros.h"
 #include "common/mem.h"
@@ -164,5 +165,5 @@ xdg_popup_create(struct view *view, struct wlr_xdg_popup *wlr_popup)
 	wlr_popup->base->surface->data =
 		wlr_scene_xdg_surface_create(parent_tree, wlr_popup->base);
 	node_descriptor_create(wlr_popup->base->surface->data,
-		LAB_NODE_DESC_XDG_POPUP, view);
+		LAB_NODE_XDG_POPUP, view, /*data*/ NULL);
 }

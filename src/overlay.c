@@ -1,106 +1,52 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #include "overlay.h"
 #include <assert.h>
+#include <wlr/types/wlr_cursor.h>
+#include <wlr/types/wlr_output_layout.h>
 #include <wlr/types/wlr_scene.h>
-#include "common/direction.h"
 #include "common/lab-scene-rect.h"
+#include "config/rcxml.h"
 #include "labwc.h"
 #include "output.h"
-#include "view.h"
+#include "regions.h"
 #include "theme.h"
+#include "view.h"
 
 static void
-create_overlay_rect(struct seat *seat, struct overlay_rect *rect,
-		struct theme_snapping_overlay *theme)
-{
-	struct server *server = seat->server;
-
-	rect->bg_enabled = theme->bg_enabled;
-	rect->border_enabled = theme->border_enabled;
-	rect->tree = wlr_scene_tree_create(&server->scene->tree);
-
-	if (rect->bg_enabled) {
-		/* Create a filled rectangle */
-		rect->bg_rect = wlr_scene_rect_create(
-			rect->tree, 0, 0, theme->bg_color);
-	}
-
-	if (rect->border_enabled) {
-		/* Create outlines */
-		struct lab_scene_rect_options opts = {
-			.border_colors = (float *[3]) {
-				theme->border_color[0],
-				theme->border_color[1],
-				theme->border_color[2],
-			},
-			.nr_borders = 3,
-			.border_width = theme->border_width,
-		};
-		rect->border_rect = lab_scene_rect_create(rect->tree, &opts);
-	}
-
-	wlr_scene_node_set_enabled(&rect->tree->node, false);
-}
-
-void overlay_reconfigure(struct seat *seat)
-{
-	if (seat->overlay.region_rect.tree) {
-		wlr_scene_node_destroy(&seat->overlay.region_rect.tree->node);
-	}
-	if (seat->overlay.edge_rect.tree) {
-		wlr_scene_node_destroy(&seat->overlay.edge_rect.tree->node);
-	}
-
-	struct theme *theme = seat->server->theme;
-	create_overlay_rect(seat, &seat->overlay.region_rect,
-		&theme->snapping_overlay_region);
-	create_overlay_rect(seat, &seat->overlay.edge_rect,
-		&theme->snapping_overlay_edge);
-}
-
-static void
-show_overlay(struct seat *seat, struct overlay_rect *rect, struct wlr_box *box)
+show_overlay(struct seat *seat, struct theme_snapping_overlay *overlay_theme,
+		struct wlr_box *box)
 {
 	struct server *server = seat->server;
 	struct view *view = server->grabbed_view;
 	assert(view);
+	assert(!seat->overlay.rect);
 
-	if (!rect->tree) {
-		overlay_reconfigure(seat);
-		assert(rect->tree);
+	struct lab_scene_rect_options opts = {
+		.width = box->width,
+		.height = box->height,
+	};
+	if (overlay_theme->bg_enabled) {
+		/* Create a filled rectangle */
+		opts.bg_color = overlay_theme->bg_color;
+	}
+	float *border_colors[3] = {
+		overlay_theme->border_color[0],
+		overlay_theme->border_color[1],
+		overlay_theme->border_color[2],
+	};
+	if (overlay_theme->border_enabled) {
+		/* Create outlines */
+		opts.border_colors = border_colors;
+		opts.nr_borders = 3;
+		opts.border_width = overlay_theme->border_width;
 	}
 
-	if (rect->bg_enabled) {
-		wlr_scene_rect_set_size(rect->bg_rect, box->width, box->height);
-	}
-	if (rect->border_enabled) {
-		lab_scene_rect_set_size(rect->border_rect, box->width, box->height);
-	}
+	seat->overlay.rect =
+		lab_scene_rect_create(view->scene_tree->node.parent, &opts);
 
-	struct wlr_scene_node *node = &rect->tree->node;
-	wlr_scene_node_reparent(node, view->scene_tree->node.parent);
+	struct wlr_scene_node *node = &seat->overlay.rect->tree->node;
 	wlr_scene_node_place_below(node, &view->scene_tree->node);
 	wlr_scene_node_set_position(node, box->x, box->y);
-	wlr_scene_node_set_enabled(node, true);
-}
-
-static void
-inactivate_overlay(struct overlay *overlay)
-{
-	if (overlay->region_rect.tree) {
-		wlr_scene_node_set_enabled(
-			&overlay->region_rect.tree->node, false);
-	}
-	if (overlay->edge_rect.tree) {
-		wlr_scene_node_set_enabled(
-			&overlay->edge_rect.tree->node, false);
-	}
-	overlay->active.region = NULL;
-	overlay->active.edge = VIEW_EDGE_INVALID;
-	overlay->active.output = NULL;
-	if (overlay->timer) {
-		wl_event_source_timer_update(overlay->timer, 0);
-	}
 }
 
 static void
@@ -109,17 +55,17 @@ show_region_overlay(struct seat *seat, struct region *region)
 	if (region == seat->overlay.active.region) {
 		return;
 	}
-	inactivate_overlay(&seat->overlay);
+	overlay_finish(seat);
 	seat->overlay.active.region = region;
 
 	struct wlr_box geo = view_get_region_snap_box(NULL, region);
-	show_overlay(seat, &seat->overlay.region_rect, &geo);
+	show_overlay(seat, &rc.theme->snapping_overlay_region, &geo);
 }
 
 static struct wlr_box
-get_edge_snap_box(enum view_edge edge, struct output *output)
+get_edge_snap_box(enum lab_edge edge, struct output *output)
 {
-	if (edge == VIEW_EDGE_UP && rc.snap_top_maximize) {
+	if (edge == LAB_EDGE_TOP && rc.snap_top_maximize) {
 		return output_usable_area_in_layout_coords(output);
 	} else {
 		return view_get_edge_snap_box(NULL, output, edge);
@@ -130,40 +76,41 @@ static int
 handle_edge_overlay_timeout(void *data)
 {
 	struct seat *seat = data;
-	assert(seat->overlay.active.edge != VIEW_EDGE_INVALID
+	assert(seat->overlay.active.edge != LAB_EDGE_NONE
 		&& seat->overlay.active.output);
 	struct wlr_box box = get_edge_snap_box(seat->overlay.active.edge,
 		seat->overlay.active.output);
-	show_overlay(seat, &seat->overlay.edge_rect, &box);
+	show_overlay(seat, &rc.theme->snapping_overlay_edge, &box);
 	return 0;
 }
 
 static bool
 edge_has_adjacent_output_from_cursor(struct seat *seat, struct output *output,
-		enum view_edge edge)
+		enum lab_edge edge)
 {
-	enum wlr_direction dir;
-	if (!direction_from_view_edge(edge, &dir)) {
+	/* Allow only up/down/left/right */
+	if (!lab_edge_is_cardinal(edge)) {
 		return false;
 	}
+	/* Cast from enum lab_edge to enum wlr_direction is safe */
 	return wlr_output_layout_adjacent_output(
-		seat->server->output_layout, dir,
+		seat->server->output_layout, (enum wlr_direction)edge,
 		output->wlr_output, seat->cursor->x, seat->cursor->y);
 }
 
 static void
-show_edge_overlay(struct seat *seat, enum view_edge edge1, enum view_edge edge2,
+show_edge_overlay(struct seat *seat, enum lab_edge edge1, enum lab_edge edge2,
 		struct output *output)
 {
 	if (!rc.snap_overlay_enabled) {
 		return;
 	}
-	uint32_t edge = edge1 | edge2;
+	enum lab_edge edge = edge1 | edge2;
 	if (seat->overlay.active.edge == edge
 			&& seat->overlay.active.output == output) {
 		return;
 	}
-	inactivate_overlay(&seat->overlay);
+	overlay_finish(seat);
 	seat->overlay.active.edge = edge;
 	seat->overlay.active.output = output;
 
@@ -184,8 +131,7 @@ show_edge_overlay(struct seat *seat, enum view_edge edge1, enum view_edge edge2,
 		wl_event_source_timer_update(seat->overlay.timer, delay);
 	} else {
 		/* Show overlay now */
-		struct wlr_box box = get_edge_snap_box(edge, output);
-		show_overlay(seat, &seat->overlay.edge_rect, &box);
+		handle_edge_overlay_timeout(seat);
 	}
 }
 
@@ -205,42 +151,23 @@ overlay_update(struct seat *seat)
 
 	/* Edge-snapping overlay */
 	struct output *output;
-	enum view_edge edge1, edge2;
+	enum lab_edge edge1, edge2;
 	if (edge_from_cursor(seat, &output, &edge1, &edge2)) {
 		show_edge_overlay(seat, edge1, edge2, output);
 		return;
 	}
 
-	overlay_hide(seat);
-}
-
-void
-overlay_hide(struct seat *seat)
-{
-	struct overlay *overlay = &seat->overlay;
-	struct server *server = seat->server;
-
-	inactivate_overlay(overlay);
-
-	/*
-	 * Reparent the rectangle nodes to server's scene-tree so they don't
-	 * get destroyed on view destruction
-	 */
-	if (overlay->region_rect.tree) {
-		wlr_scene_node_reparent(&overlay->region_rect.tree->node,
-			&server->scene->tree);
-	}
-	if (overlay->edge_rect.tree) {
-		wlr_scene_node_reparent(&overlay->edge_rect.tree->node,
-			&server->scene->tree);
-	}
+	overlay_finish(seat);
 }
 
 void
 overlay_finish(struct seat *seat)
 {
+	if (seat->overlay.rect) {
+		wlr_scene_node_destroy(&seat->overlay.rect->tree->node);
+	}
 	if (seat->overlay.timer) {
 		wl_event_source_remove(seat->overlay.timer);
-		seat->overlay.timer = NULL;
 	}
+	seat->overlay = (struct overlay){0};
 }

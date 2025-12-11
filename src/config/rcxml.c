@@ -2,20 +2,17 @@
 #define _POSIX_C_SOURCE 200809L
 #include "config/rcxml.h"
 #include <assert.h>
-#include <fcntl.h>
 #include <glib.h>
 #include <libxml/parser.h>
-#include <libxml/tree.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
-#include <unistd.h>
-#include <wayland-server-core.h>
 #include <wlr/util/box.h>
 #include <wlr/util/log.h>
 #include "action.h"
+#include "common/buf.h"
 #include "common/dir.h"
 #include "common/list.h"
 #include "common/macros.h"
@@ -24,16 +21,19 @@
 #include "common/parse-bool.h"
 #include "common/parse-double.h"
 #include "common/string-helpers.h"
-#include "common/three-state.h"
 #include "common/xml.h"
 #include "config/default-bindings.h"
 #include "config/keybind.h"
 #include "config/libinput.h"
 #include "config/mousebind.h"
 #include "config/tablet.h"
+#include "config/tablet-tool.h"
+#include "config/touch.h"
+#include "cycle.h"
 #include "labwc.h"
-#include "osd.h"
 #include "regions.h"
+#include "ssd.h"
+#include "translate.h"
 #include "view.h"
 #include "window-rules.h"
 #include "workspaces.h"
@@ -55,42 +55,42 @@ enum font_place {
 static void load_default_key_bindings(void);
 static void load_default_mouse_bindings(void);
 
-static int
+static enum lab_window_type
 parse_window_type(const char *type)
 {
 	if (!type) {
-		return -1;
+		return LAB_WINDOW_TYPE_INVALID;
 	}
 	if (!strcasecmp(type, "desktop")) {
-		return NET_WM_WINDOW_TYPE_DESKTOP;
+		return LAB_WINDOW_TYPE_DESKTOP;
 	} else if (!strcasecmp(type, "dock")) {
-		return NET_WM_WINDOW_TYPE_DOCK;
+		return LAB_WINDOW_TYPE_DOCK;
 	} else if (!strcasecmp(type, "toolbar")) {
-		return NET_WM_WINDOW_TYPE_TOOLBAR;
+		return LAB_WINDOW_TYPE_TOOLBAR;
 	} else if (!strcasecmp(type, "menu")) {
-		return NET_WM_WINDOW_TYPE_MENU;
+		return LAB_WINDOW_TYPE_MENU;
 	} else if (!strcasecmp(type, "utility")) {
-		return NET_WM_WINDOW_TYPE_UTILITY;
+		return LAB_WINDOW_TYPE_UTILITY;
 	} else if (!strcasecmp(type, "splash")) {
-		return NET_WM_WINDOW_TYPE_SPLASH;
+		return LAB_WINDOW_TYPE_SPLASH;
 	} else if (!strcasecmp(type, "dialog")) {
-		return NET_WM_WINDOW_TYPE_DIALOG;
+		return LAB_WINDOW_TYPE_DIALOG;
 	} else if (!strcasecmp(type, "dropdown_menu")) {
-		return NET_WM_WINDOW_TYPE_DROPDOWN_MENU;
+		return LAB_WINDOW_TYPE_DROPDOWN_MENU;
 	} else if (!strcasecmp(type, "popup_menu")) {
-		return NET_WM_WINDOW_TYPE_POPUP_MENU;
+		return LAB_WINDOW_TYPE_POPUP_MENU;
 	} else if (!strcasecmp(type, "tooltip")) {
-		return NET_WM_WINDOW_TYPE_TOOLTIP;
+		return LAB_WINDOW_TYPE_TOOLTIP;
 	} else if (!strcasecmp(type, "notification")) {
-		return NET_WM_WINDOW_TYPE_NOTIFICATION;
+		return LAB_WINDOW_TYPE_NOTIFICATION;
 	} else if (!strcasecmp(type, "combo")) {
-		return NET_WM_WINDOW_TYPE_COMBO;
+		return LAB_WINDOW_TYPE_COMBO;
 	} else if (!strcasecmp(type, "dnd")) {
-		return NET_WM_WINDOW_TYPE_DND;
+		return LAB_WINDOW_TYPE_DND;
 	} else if (!strcasecmp(type, "normal")) {
-		return NET_WM_WINDOW_TYPE_NORMAL;
+		return LAB_WINDOW_TYPE_NORMAL;
 	} else {
-		return -1;
+		return LAB_WINDOW_TYPE_INVALID;
 	}
 }
 
@@ -117,7 +117,8 @@ parse_window_type(const char *type)
  * desk         D           All-desktops toggle (aka omnipresent)
  */
 static void
-fill_section(const char *content, struct wl_list *list, uint32_t *found_buttons)
+fill_section(const char *content, enum lab_node_type *buttons, int *count,
+		uint32_t *found_buttons /* bitmask */)
 {
 	gchar **identifiers = g_strsplit(content, ",", -1);
 	for (size_t i = 0; identifiers[i]; ++i) {
@@ -125,35 +126,36 @@ fill_section(const char *content, struct wl_list *list, uint32_t *found_buttons)
 		if (string_null_or_empty(identifier)) {
 			continue;
 		}
-		enum ssd_part_type type = LAB_SSD_NONE;
+		enum lab_node_type type = LAB_NODE_NONE;
 		if (!strcmp(identifier, "icon")) {
 #if HAVE_LIBSFDO
-			type = LAB_SSD_BUTTON_WINDOW_ICON;
+			type = LAB_NODE_BUTTON_WINDOW_ICON;
 #else
 			wlr_log(WLR_ERROR, "libsfdo is not linked. "
 				"Replacing 'icon' in titlebar layout with 'menu'.");
-			type = LAB_SSD_BUTTON_WINDOW_MENU;
+			type = LAB_NODE_BUTTON_WINDOW_MENU;
 #endif
 		} else if (!strcmp(identifier, "menu")) {
-			type = LAB_SSD_BUTTON_WINDOW_MENU;
+			type = LAB_NODE_BUTTON_WINDOW_MENU;
 		} else if (!strcmp(identifier, "iconify")) {
-			type = LAB_SSD_BUTTON_ICONIFY;
+			type = LAB_NODE_BUTTON_ICONIFY;
 		} else if (!strcmp(identifier, "max")) {
-			type = LAB_SSD_BUTTON_MAXIMIZE;
+			type = LAB_NODE_BUTTON_MAXIMIZE;
 		} else if (!strcmp(identifier, "close")) {
-			type = LAB_SSD_BUTTON_CLOSE;
+			type = LAB_NODE_BUTTON_CLOSE;
 		} else if (!strcmp(identifier, "shade")) {
-			type = LAB_SSD_BUTTON_SHADE;
+			type = LAB_NODE_BUTTON_SHADE;
 		} else if (!strcmp(identifier, "desk")) {
-			type = LAB_SSD_BUTTON_OMNIPRESENT;
+			type = LAB_NODE_BUTTON_OMNIPRESENT;
 		} else {
 			wlr_log(WLR_ERROR, "invalid titleLayout identifier '%s'",
 				identifier);
 			continue;
 		}
 
-		assert(type != LAB_SSD_NONE);
+		assert(type != LAB_NODE_NONE);
 
+		/* We no longer need this check, but let's keep it just in case */
 		if (*found_buttons & (1 << type)) {
 			wlr_log(WLR_ERROR, "ignoring duplicated button type '%s'",
 				identifier);
@@ -162,9 +164,8 @@ fill_section(const char *content, struct wl_list *list, uint32_t *found_buttons)
 
 		*found_buttons |= (1 << type);
 
-		struct title_button *item = znew(*item);
-		item->type = type;
-		wl_list_append(list, &item->link);
+		assert(*count < TITLE_BUTTONS_MAX);
+		buttons[(*count)++] = type;
 	}
 	g_strfreev(identifiers);
 }
@@ -172,27 +173,15 @@ fill_section(const char *content, struct wl_list *list, uint32_t *found_buttons)
 static void
 clear_title_layout(void)
 {
-	struct title_button *button, *button_tmp;
-	wl_list_for_each_safe(button, button_tmp, &rc.title_buttons_left, link) {
-		wl_list_remove(&button->link);
-		zfree(button);
-	}
-	wl_list_for_each_safe(button, button_tmp, &rc.title_buttons_right, link) {
-		wl_list_remove(&button->link);
-		zfree(button);
-	}
+	rc.nr_title_buttons_left = 0;
+	rc.nr_title_buttons_right = 0;
 	rc.title_layout_loaded = false;
 }
 
 static void
-fill_title_layout(char *content)
+fill_title_layout(const char *content)
 {
 	clear_title_layout();
-
-	struct wl_list *sections[] = {
-		&rc.title_buttons_left,
-		&rc.title_buttons_right,
-	};
 
 	gchar **parts = g_strsplit(content, ":", -1);
 
@@ -202,9 +191,10 @@ fill_title_layout(char *content)
 	}
 
 	uint32_t found_buttons = 0;
-	for (size_t i = 0; parts[i]; ++i) {
-		fill_section(parts[i], sections[i], &found_buttons);
-	}
+	fill_section(parts[0], rc.title_buttons_left,
+		&rc.nr_title_buttons_left, &found_buttons);
+	fill_section(parts[1], rc.title_buttons_right,
+		&rc.nr_title_buttons_right, &found_buttons);
 
 	rc.title_layout_loaded = true;
 err:
@@ -257,7 +247,7 @@ static void
 fill_window_rule(xmlNode *node)
 {
 	struct window_rule *window_rule = znew(*window_rule);
-	window_rule->window_type = -1; // Window types are >= 0
+	window_rule->window_type = LAB_WINDOW_TYPE_INVALID;
 	wl_list_append(&rc.window_rules, &window_rule->link);
 	wl_list_init(&window_rule->actions);
 
@@ -333,23 +323,23 @@ fill_window_rules(xmlNode *node)
 static void
 clear_window_switcher_fields(void)
 {
-	struct window_switcher_field *field, *field_tmp;
+	struct cycle_osd_field *field, *field_tmp;
 	wl_list_for_each_safe(field, field_tmp, &rc.window_switcher.fields, link) {
 		wl_list_remove(&field->link);
-		osd_field_free(field);
+		cycle_osd_field_free(field);
 	}
 }
 
 static void
 fill_window_switcher_field(xmlNode *node)
 {
-	struct window_switcher_field *field = znew(*field);
+	struct cycle_osd_field *field = znew(*field);
 	wl_list_append(&rc.window_switcher.fields, &field->link);
 
 	xmlNode *child;
 	char *key, *content;
 	LAB_XML_FOR_EACH(node, child, key, content) {
-		osd_field_arg_from_xml_node(field, key, content);
+		cycle_osd_field_arg_from_xml_node(field, key, content);
 	}
 }
 
@@ -433,17 +423,17 @@ fill_action_query(struct action *action, xmlNode *node, struct view_query *query
 		} else if (!strcasecmp(key, "sandboxAppId")) {
 			xstrdup_replace(query->sandbox_app_id, content);
 		} else if (!strcasecmp(key, "shaded")) {
-			query->shaded = parse_three_state(content);
+			query->shaded = parse_tristate(content);
 		} else if (!strcasecmp(key, "maximized")) {
 			query->maximized = view_axis_parse(content);
 		} else if (!strcasecmp(key, "iconified")) {
-			query->iconified = parse_three_state(content);
+			query->iconified = parse_tristate(content);
 		} else if (!strcasecmp(key, "focused")) {
-			query->focused = parse_three_state(content);
+			query->focused = parse_tristate(content);
 		} else if (!strcasecmp(key, "omnipresent")) {
-			query->omnipresent = parse_three_state(content);
+			query->omnipresent = parse_tristate(content);
 		} else if (!strcasecmp(key, "tiled")) {
-			query->tiled = view_edge_parse(content,
+			query->tiled = lab_edge_parse(content,
 				/*tiled*/ true, /*any*/ true);
 		} else if (!strcasecmp(key, "tiled_region")) {
 			xstrdup_replace(query->tiled_region, content);
@@ -723,6 +713,11 @@ fill_libinput_category(xmlNode *node)
 	xmlNode *child;
 	char *key, *content;
 	LAB_XML_FOR_EACH(node, child, key, content) {
+		if (string_null_or_empty(content)) {
+			wlr_log(WLR_ERROR, "Empty string is not allowed for "
+				"<libinput><device><%s>. Ignoring.", key);
+			continue;
+		}
 		if (!strcmp(key, "category")) {
 			/*
 			 * First we try to get a type based on a number of
@@ -1075,13 +1070,16 @@ entry(xmlNode *node, char *nodename, char *content)
 		load_default_mouse_bindings();
 	} else if (!strcasecmp(nodename, "prefix.desktops")) {
 		xstrdup_replace(rc.workspace_config.prefix, content);
+	} else if (!strcasecmp(nodename, "thumbnailLabelFormat.osd.windowSwitcher")) {
+		xstrdup_replace(rc.window_switcher.thumbnail_label_format, content);
 
 	} else if (!lab_xml_node_is_leaf(node)) {
 		/* parse children of nested nodes other than above */
 		return true;
 
 	} else if (str_space_only(content)) {
-		/* ignore empty leaf nodes other than above */
+		wlr_log(WLR_ERROR, "Empty string is not allowed for %s. "
+			"Ignoring.", nodename);
 
 	/* handle non-empty leaf nodes */
 	} else if (!strcmp(nodename, "decoration.core")) {
@@ -1104,8 +1102,12 @@ entry(xmlNode *node, char *nodename, char *content)
 		set_bool(content, &rc.xwayland_persistence);
 	} else if (!strcasecmp(nodename, "primarySelection.core")) {
 		set_bool(content, &rc.primary_selection);
+
+	} else if (!strcasecmp(nodename, "promptCommand.core")) {
+		xstrdup_replace(rc.prompt_command, content);
+
 	} else if (!strcmp(nodename, "policy.placement")) {
-		enum view_placement_policy policy = view_placement_parse(content);
+		enum lab_placement_policy policy = view_placement_parse(content);
 		if (policy != LAB_PLACE_INVALID) {
 			rc.placement_policy = policy;
 		}
@@ -1127,6 +1129,12 @@ entry(xmlNode *node, char *nodename, char *content)
 		rc.corner_radius = atoi(content);
 	} else if (!strcasecmp(nodename, "keepBorder.theme")) {
 		set_bool(content, &rc.ssd_keep_border);
+	} else if (!strcasecmp(nodename, "maximizedDecoration.theme")) {
+		if (!strcasecmp(content, "titlebar")) {
+			rc.hide_maximized_window_titlebar = false;
+		} else if (!strcasecmp(content, "none")) {
+			rc.hide_maximized_window_titlebar = true;
+		}
 	} else if (!strcasecmp(nodename, "dropShadows.theme")) {
 		set_bool(content, &rc.shadows_enabled);
 	} else if (!strcasecmp(nodename, "dropShadowsOnTiled.theme")) {
@@ -1172,7 +1180,14 @@ entry(xmlNode *node, char *nodename, char *content)
 	} else if (!strcasecmp(nodename, "unMaximizeThreshold.resistance")) {
 		rc.unmaximize_threshold = atoi(content);
 	} else if (!strcasecmp(nodename, "range.snapping")) {
-		rc.snap_edge_range = atoi(content);
+		rc.snap_edge_range_inner = atoi(content);
+		rc.snap_edge_range_outer = atoi(content);
+		wlr_log(WLR_ERROR, "<snapping><range> is deprecated. "
+			"Use <snapping><range inner=\"\" outer=\"\"> instead.");
+	} else if (!strcasecmp(nodename, "inner.range.snapping")) {
+		rc.snap_edge_range_inner = atoi(content);
+	} else if (!strcasecmp(nodename, "outer.range.snapping")) {
+		rc.snap_edge_range_outer = atoi(content);
 	} else if (!strcasecmp(nodename, "cornerRange.snapping")) {
 		rc.snap_edge_corner_range = atoi(content);
 	} else if (!strcasecmp(nodename, "enabled.overlay.snapping")) {
@@ -1196,9 +1211,59 @@ entry(xmlNode *node, char *nodename, char *content)
 			wlr_log(WLR_ERROR, "ignoring invalid value for notifyClient");
 		}
 
-	/* <windowSwitcher show="" preview="" outlines="" /> */
+	/*
+	 * <windowSwitcher preview="" outlines="">
+	 *   <osd show="" style="" output="" thumbnailLabelFormat="" />
+	 * </windowSwitcher>
+	 *
+	 * thumnailLabelFormat is handled above to allow for an empty value
+	 */
+	} else if (!strcasecmp(nodename, "show.osd.windowSwitcher")) {
+		set_bool(content, &rc.window_switcher.show);
+	} else if (!strcasecmp(nodename, "style.osd.windowSwitcher")) {
+		if (!strcasecmp(content, "classic")) {
+			rc.window_switcher.style = CYCLE_OSD_STYLE_CLASSIC;
+		} else if (!strcasecmp(content, "thumbnail")) {
+			rc.window_switcher.style = CYCLE_OSD_STYLE_THUMBNAIL;
+		} else {
+			wlr_log(WLR_ERROR, "Invalid windowSwitcher style %s: "
+				"should be one of classic|thumbnail", content);
+		}
+	} else if (!strcasecmp(nodename, "output.osd.windowSwitcher")) {
+		if (!strcasecmp(content, "all")) {
+			rc.window_switcher.output_criteria = CYCLE_OSD_OUTPUT_ALL;
+		} else if (!strcasecmp(content, "cursor")) {
+			rc.window_switcher.output_criteria = CYCLE_OSD_OUTPUT_CURSOR;
+		} else if (!strcasecmp(content, "focused")) {
+			rc.window_switcher.output_criteria = CYCLE_OSD_OUTPUT_FOCUSED;
+		} else {
+			wlr_log(WLR_ERROR, "Invalid windowSwitcher output %s: "
+				"should be one of all|focused|cursor", content);
+		}
+	} else if (!strcasecmp(nodename, "order.windowSwitcher")) {
+		if (!strcasecmp(content, "focus")) {
+			rc.window_switcher.order = WINDOW_SWITCHER_ORDER_FOCUS;
+		} else if (!strcasecmp(content, "age")) {
+			rc.window_switcher.order = WINDOW_SWITCHER_ORDER_AGE;
+		} else {
+			wlr_log(WLR_ERROR, "Invalid windowSwitcher order %s: "
+				"should be one of focus|age", content);
+		}
+
+	/* The following two are for backward compatibility only. */
 	} else if (!strcasecmp(nodename, "show.windowSwitcher")) {
 		set_bool(content, &rc.window_switcher.show);
+		wlr_log(WLR_ERROR, "<windowSwitcher show=\"\" /> is deprecated."
+			" Use <windowSwitcher><osd show=\"\" />");
+	} else if (!strcasecmp(nodename, "style.windowSwitcher")) {
+		if (!strcasecmp(content, "classic")) {
+			rc.window_switcher.style = CYCLE_OSD_STYLE_CLASSIC;
+		} else if (!strcasecmp(content, "thumbnail")) {
+			rc.window_switcher.style = CYCLE_OSD_STYLE_THUMBNAIL;
+		}
+		wlr_log(WLR_ERROR, "<windowSwitcher style=\"\" /> is deprecated."
+			" Use <windowSwitcher><osd style=\"\" />");
+
 	} else if (!strcasecmp(nodename, "preview.windowSwitcher")) {
 		set_bool(content, &rc.window_switcher.preview);
 	} else if (!strcasecmp(nodename, "outlines.windowSwitcher")) {
@@ -1208,6 +1273,8 @@ entry(xmlNode *node, char *nodename, char *content)
 			rc.window_switcher.criteria &=
 				~LAB_VIEW_CRITERIA_CURRENT_WORKSPACE;
 		}
+	} else if (!strcasecmp(nodename, "unshade.windowSwitcher")) {
+		set_bool(content, &rc.window_switcher.unshade);
 
 	/* Remove this long term - just a friendly warning for now */
 	} else if (strstr(nodename, "windowswitcher.core")) {
@@ -1314,8 +1381,7 @@ traverse(xmlNode *node)
 	}
 }
 
-/* Exposed in header file to allow unit tests to parse buffers */
-void
+static void
 rcxml_parse_xml(struct buf *b)
 {
 	int options = 0;
@@ -1347,8 +1413,6 @@ rcxml_init(void)
 	static bool has_run;
 
 	if (!has_run) {
-		wl_list_init(&rc.title_buttons_left);
-		wl_list_init(&rc.title_buttons_right);
 		wl_list_init(&rc.usable_area_overrides);
 		wl_list_init(&rc.keybinds);
 		wl_list_init(&rc.mousebinds);
@@ -1366,6 +1430,7 @@ rcxml_init(void)
 	rc.placement_cascade_offset_y = 0;
 
 	rc.xdg_shell_server_side_deco = true;
+	rc.hide_maximized_window_titlebar = false;
 	rc.show_title = true;
 	rc.title_layout_loaded = false;
 	rc.ssd_keep_border = true;
@@ -1395,10 +1460,10 @@ rcxml_init(void)
 
 	rc.tablet.force_mouse_emulation = false;
 	rc.tablet.output_name = NULL;
-	rc.tablet.rotation = 0;
+	rc.tablet.rotation = LAB_ROTATE_NONE;
 	rc.tablet.box = (struct wlr_fbox){0};
 	tablet_load_default_button_mappings();
-	rc.tablet_tool.motion = LAB_TABLET_MOTION_ABSOLUTE;
+	rc.tablet_tool.motion = LAB_MOTION_ABSOLUTE;
 	rc.tablet_tool.relative_motion_sensitivity = 1.0;
 
 	rc.repeat_rate = 25;
@@ -1410,7 +1475,8 @@ rcxml_init(void)
 	rc.unsnap_threshold = 20;
 	rc.unmaximize_threshold = 150;
 
-	rc.snap_edge_range = 10;
+	rc.snap_edge_range_inner = 10;
+	rc.snap_edge_range_outer = 10;
 	rc.snap_edge_corner_range = 50;
 	rc.snap_overlay_enabled = true;
 	rc.snap_overlay_delay_inner = 500;
@@ -1419,11 +1485,16 @@ rcxml_init(void)
 	rc.snap_tiling_events_mode = LAB_TILING_EVENTS_ALWAYS;
 
 	rc.window_switcher.show = true;
+	rc.window_switcher.style = CYCLE_OSD_STYLE_CLASSIC;
+	rc.window_switcher.output_criteria = CYCLE_OSD_OUTPUT_ALL;
+	rc.window_switcher.thumbnail_label_format = xstrdup("%T");
 	rc.window_switcher.preview = true;
 	rc.window_switcher.outlines = true;
+	rc.window_switcher.unshade = true;
 	rc.window_switcher.criteria = LAB_VIEW_CRITERIA_CURRENT_WORKSPACE
 		| LAB_VIEW_CRITERIA_ROOT_TOPLEVEL
 		| LAB_VIEW_CRITERIA_NO_SKIP_WINDOW_SWITCHER;
+	rc.window_switcher.order = WINDOW_SWITCHER_ORDER_FOCUS;
 
 	rc.resize_indicator = LAB_RESIZE_INDICATOR_NEVER;
 	rc.resize_draw_contents = true;
@@ -1585,7 +1656,7 @@ static void
 load_default_window_switcher_fields(void)
 {
 	static const struct {
-		enum window_switcher_field_content content;
+		enum cycle_osd_field_content content;
 		int width;
 	} fields[] = {
 #if HAVE_LIBSFDO
@@ -1598,9 +1669,8 @@ load_default_window_switcher_fields(void)
 #endif
 	};
 
-	struct window_switcher_field *field;
 	for (size_t i = 0; i < ARRAY_SIZE(fields); i++) {
-		field = znew(*field);
+		struct cycle_osd_field *field = znew(*field);
 		field->content = fields[i].content;
 		field->width = fields[i].width;
 		wl_list_append(&rc.window_switcher.fields, &field->link);
@@ -1620,6 +1690,24 @@ post_processing(void)
 		load_default_mouse_bindings();
 	}
 
+	if (!rc.prompt_command) {
+		rc.prompt_command =
+			xstrdup("labnag "
+				"--message '%m' "
+				"--button-dismiss '%n' "
+				"--button-dismiss '%y' "
+				"--background-color '%b' "
+				"--text-color '%t' "
+				"--button-border-color '%t' "
+				"--border-bottom-color '%t' "
+				"--button-background-color '%b' "
+				"--button-text-color '%t' "
+				"--border-bottom-size 1 "
+				"--button-border-size 3 "
+				"--keyboard-focus on-demand "
+				"--layer overlay "
+				"--timeout 0");
+	}
 	if (!rc.fallback_app_icon_name) {
 		rc.fallback_app_icon_name = xstrdup("labwc");
 	}
@@ -1799,13 +1887,13 @@ validate(void)
 
 	/* OSD fields */
 	int field_width_sum = 0;
-	struct window_switcher_field *field, *field_tmp;
+	struct cycle_osd_field *field, *field_tmp;
 	wl_list_for_each_safe(field, field_tmp, &rc.window_switcher.fields, link) {
 		field_width_sum += field->width;
-		if (!osd_field_is_valid(field) || field_width_sum > 100) {
+		if (!cycle_osd_field_is_valid(field) || field_width_sum > 100) {
 			wlr_log(WLR_ERROR, "Deleting invalid window switcher field %p", field);
 			wl_list_remove(&field->link);
-			osd_field_free(field);
+			cycle_osd_field_free(field);
 		}
 	}
 }
@@ -1844,25 +1932,13 @@ rcxml_read(const char *filename)
 	 */
 	for (struct wl_list *elm = iter(&paths); elm != &paths; elm = iter(elm)) {
 		struct path *path = wl_container_of(elm, path, link);
-		FILE *stream = fopen(path->string, "r");
-		if (!stream) {
+		struct buf b = buf_from_file(path->string);
+		if (!b.len) {
 			continue;
 		}
 
 		wlr_log(WLR_INFO, "read config file %s", path->string);
 
-		struct buf b = BUF_INIT;
-		char *line = NULL;
-		size_t len = 0;
-		while (getline(&line, &len, stream) != -1) {
-			char *p = strrchr(line, '\n');
-			if (p) {
-				*p = '\0';
-			}
-			buf_add(&b, line);
-		}
-		zfree(line);
-		fclose(stream);
 		rcxml_parse_xml(&b);
 		buf_reset(&b);
 		if (!should_merge_config) {
@@ -1882,11 +1958,13 @@ rcxml_finish(void)
 	zfree(rc.font_menuheader.name);
 	zfree(rc.font_menuitem.name);
 	zfree(rc.font_osd.name);
+	zfree(rc.prompt_command);
 	zfree(rc.theme_name);
 	zfree(rc.icon_theme_name);
 	zfree(rc.fallback_app_icon_name);
 	zfree(rc.workspace_config.prefix);
 	zfree(rc.tablet.output_name);
+	zfree(rc.window_switcher.thumbnail_label_format);
 
 	clear_title_layout();
 

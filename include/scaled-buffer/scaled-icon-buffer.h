@@ -10,7 +10,7 @@ struct wlr_scene_node;
 struct wlr_scene_buffer;
 
 struct scaled_icon_buffer {
-	struct scaled_scene_buffer *scaled_buffer;
+	struct scaled_buffer *scaled_buffer;
 	struct wlr_scene_buffer *scene_buffer;
 	struct server *server;
 	/* for window icon */
@@ -34,7 +34,7 @@ struct scaled_icon_buffer {
 
 /*
  * Create an auto scaling icon buffer, providing a wlr_scene_buffer node for
- * display. It gets destroyed automatically when the backing scaled_scene_buffer
+ * display. It gets destroyed automatically when the backing scaled_buffer
  * is being destroyed which in turn happens automatically when the backing
  * wlr_scene_buffer (or one of its parents) is being destroyed.
  */
@@ -47,8 +47,5 @@ void scaled_icon_buffer_set_view(struct scaled_icon_buffer *self,
 
 void scaled_icon_buffer_set_icon_name(struct scaled_icon_buffer *self,
 	const char *icon_name);
-
-/* Obtain scaled_icon_buffer from wlr_scene_node */
-struct scaled_icon_buffer *scaled_icon_buffer_from_node(struct wlr_scene_node *node);
 
 #endif /* LABWC_SCALED_ICON_BUFFER_H */
